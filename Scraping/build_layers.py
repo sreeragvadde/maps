@@ -20,7 +20,10 @@ from schema import make_feature_collection
 
 COORD_PRECISION = 5  # decimal places, ~1 m at Calgary's latitude — plenty for a city map, much smaller files
 
-NETWORK_KEEP = ("facility_type", "bicycle_access", "osm_name")
+NETWORK_KEEP = (
+    "facility_type", "bicycle_access", "osm_name", "highway", "surface",
+    "cycleway", "cycleway_left", "cycleway_right", "incline", "ele",
+)
 CLOSURE_KEEP = ("status", "calgary_temporal_status", "start_date", "end_date", "detour_note")
 
 

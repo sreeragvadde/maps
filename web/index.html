@@ -376,6 +376,19 @@ function init3D(map) {
       id: 'satellite', type: 'raster', source: 'satellite',
       layout: { visibility: 'none' }
     });
+    map.addLayer({
+      id: 'satellite', type: 'raster', source: 'satellite',
+      layout: { visibility: 'none' }
+    });
+    map.setSky({
+      'sky-color': '#7ab8f5',
+      'horizon-color': '#dcebf7',
+      'fog-color': '#e8eef4',
+      'sky-horizon-blend': 0.5,
+      'horizon-fog-blend': 0.5,
+      'fog-ground-blend': 0.3,
+      'atmosphere-blend': 0.8
+    });
   } catch (e) { console.error('3D init failed', e); }
 }
 

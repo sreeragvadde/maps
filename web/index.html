@@ -7,7 +7,7 @@
 <meta name="theme-color" content="#1a1a1a">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<link rel="manifest" href="manifest-sf.webmanifest">
+<link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="stylesheet" href="vendor/maplibre-gl.css">
@@ -179,24 +179,13 @@
 <button id="plan-btn" type="button">Plan route</button>
 <script>
 
-const CITIES = {
-  calgary: { name: 'Calgary', center: [-114.0719, 51.0447], zoom: 11, timezone: 'America/Edmonton',
-              dataDir: '../data', network: true,
-              attribution: 'City of Calgary Open Data (Open Government Licence - Calgary)' },
-  sf:      { name: 'San Francisco', center: [-122.4194, 37.7749], zoom: 12, timezone: 'America/Los_Angeles',
-              dataDir: '../data/sf', network: false,
-              attribution: 'SFMTA Temporary Street Closures via DataSF' }
+const CITY = {
+  name: 'Calgary', center: [-114.0719, 51.0447], zoom: 11, timezone: 'America/Edmonton',
+  dataDir: '../data', network: true,
+  attribution: 'City of Calgary Open Data (Open Government Licence - Calgary)'
 };
-const CITY = CITIES[new URLSearchParams(location.search).get('city')] || CITIES.sf;
-if (CITY === CITIES.calgary) document.querySelector('link[rel="manifest"]').href = 'manifest.webmanifest';
 document.title = CITY.name + ' Cycling Closures Map';
 document.getElementById('welcome-title').textContent = CITY.name + ' Cycling Closures Map';
-
-if (!CITY.network) {
-  document.getElementById('detour-hint').style.display = 'none';
-  ['t-network', 't-unconfirmed', 't-detour'].forEach(id =>
-    document.getElementById(id).closest('label').style.display = 'none');
-}
 
 const map = new maplibregl.Map({
   container: 'map',

@@ -1,7 +1,7 @@
 {
   "name": "Calgary Cycling Closures",
   "short_name": "Bike Closures",
-  "start_url": "./index.html?city=calgary",
+  "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#1a1a1a",
   "theme_color": "#1a1a1a",

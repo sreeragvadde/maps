@@ -4,11 +4,10 @@ const ALLOWED_ORIGINS = new Set([
   'http://localhost:8000',
 ]);
 const ORS = 'https://api.openrouteservice.org/v2/directions/cycling-regular/geojson';
-const BBOXES = [
-  { minLng: -114.5,  maxLng: -113.7,  minLat: 50.8,  maxLat: 51.3  },  // Calgary
-  { minLng: -122.55, maxLng: -122.35, minLat: 37.70, maxLat: 37.84 },  // San Francisco (checked GMaps.)
-];
-const inAnyBox = p => BBOXES.some(b => p[0] >= b.minLng && p[0] <= b.maxLng && p[1] >= b.minLat && p[1] <= b.maxLat);
+const CALGARY_BBOX = { minLng: -114.5, maxLng: -113.7, minLat: 50.8, maxLat: 51.3 };
+const inCalgary = p =>
+  p[0] >= CALGARY_BBOX.minLng && p[0] <= CALGARY_BBOX.maxLng &&
+  p[1] >= CALGARY_BBOX.minLat && p[1] <= CALGARY_BBOX.maxLat;
 
 const err = (status, message, headers = {}) =>
   new Response(JSON.stringify({ error: { message } }),
@@ -17,7 +16,7 @@ const err = (status, message, headers = {}) =>
 function validCoords(c) {
   return Array.isArray(c) && c.length === 2 && c.every(p =>
     Array.isArray(p) && p.length === 2 && p.every(Number.isFinite) &&
-    inAnyBox(p));
+    inCalgary(p));
 }
 
 export default {
@@ -36,7 +35,7 @@ export default {
 
     let body;
     try { body = await request.json(); } catch { return err(400, 'Invalid JSON', cors); }
-    if (!validCoords(body.coordinates)) return err(400, 'Coordinates must be two [lng, lat] points in a supported city', cors);
+    if (!validCoords(body.coordinates)) return err(400, 'Coordinates must be two [lng, lat] points in Calgary', cors);
 
     // Rate limit: one shared bucket protects the ORS allowance
     const { success } = await env.ROUTE_LIMITER.limit({ key: 'route' });

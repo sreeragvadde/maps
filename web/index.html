@@ -584,12 +584,21 @@ function renderEcoDashboard() {
 renderEcoDashboard();
 
 let is3D = false;
+const BUILDING_LAYER = 'building-3d';
+
 function set3D(on) {
   try {
     map.setTerrain(on ? { source: 'dem', exaggeration: 1.5 } : null);
     map.easeTo({ pitch: on ? 65 : 0, duration: 800 });
     is3D = on;
   } catch (e) { console.error('3D toggle failed', e); }
+
+  // Buildings: separate try/catch so a building failure can't undo the terrain toggle
+  try {
+    if (map.getLayer(BUILDING_LAYER)) {
+      map.setLayoutProperty(BUILDING_LAYER, 'visibility', on ? 'visible' : 'none');
+    }
+  } catch (e) { console.error('Building toggle failed', e); }
 }
 
 function init3D(map) {
@@ -613,10 +622,6 @@ function init3D(map) {
       id: 'satellite', type: 'raster', source: 'satellite',
       layout: { visibility: 'none' }
     });
-    map.addLayer({
-      id: 'satellite', type: 'raster', source: 'satellite',
-      layout: { visibility: 'none' }
-    });
     map.setSky({
       'sky-color': '#7ab8f5',
       'horizon-color': '#dcebf7',
@@ -627,6 +632,16 @@ function init3D(map) {
       'atmosphere-blend': 0.8
     });
   } catch (e) { console.error('3D init failed', e); }
+
+  // Buildings: hidden until 3D mode, and moved above the satellite layer
+  try {
+    if (map.getLayer(BUILDING_LAYER)) {
+      map.moveLayer(BUILDING_LAYER);   // no beforeId = top of the stack so far
+      map.setLayoutProperty(BUILDING_LAYER, 'visibility', 'none');
+    } else {
+      console.warn('building-3d layer not found; skipping 3D buildings');
+    }
+  } catch (e) { console.error('3D buildings init failed', e); }
 }
 
 map.on('load', async () => {

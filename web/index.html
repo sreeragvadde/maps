@@ -201,12 +201,32 @@ const map = new maplibregl.Map({
   }
 });
 
-map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
+map.addControl(new maplibregl.NavigationControl({ showCompass: true, visualizePitch: true }), 'top-right');
 map.addControl(new maplibregl.GeolocateControl({
   positionOptions: { enableHighAccuracy: true },
   trackUserLocation: true,
   showUserLocation: true
 }), 'top-right');
+class Toggle3D { // button for 3D
+  onAdd() {
+    this.el = document.createElement('div');
+    this.el.className = 'maplibregl-ctrl maplibregl-ctrl-group';
+    const mk = (label, fn) => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.textContent = label; b.onclick = fn;
+      this.el.appendChild(b); return b;
+    };
+    mk('3D', () => set3D(!is3D));
+    let sat = false;
+    mk('🛰', () => {
+      sat = !sat;
+      map.setLayoutProperty('satellite', 'visibility', sat ? 'visible' : 'none');
+    });
+    return this.el;
+  }
+  onRemove() { this.el.remove(); }
+}
+map.addControl(new Toggle3D(), 'top-right');
 
 // Collapsible panel; start collapsed on small screens so the map is visible.
 const panel = document.getElementById('panel');

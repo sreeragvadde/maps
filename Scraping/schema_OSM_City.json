@@ -1,0 +1,14 @@
+{
+  "type": "Feature",
+  "geometry": { "type": "LineString", "coordinates": [...] },
+  "properties": {
+    "source": "osm | calgary-open-data",
+    "facility_type": "cycle_track | bike_lane | pathway | trail | shared_use",
+    "bicycle_access": "designated | yes | permissive | unknown",
+    "status": "open | closed | detour | reduced",
+    "start_date": "2026-09-01",
+    "end_date": "2026-10-15",
+    "detour_note": "string or null",
+    "last_verified": "2026-09-26"
+  }
+}

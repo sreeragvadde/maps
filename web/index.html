@@ -643,6 +643,7 @@ function buildWallData(closures) {
         type: 'Feature',
         geometry: poly.geometry,
         properties: {
+          ...p,                       // status, detour_note, start/end dates, window fields: what the popup reads
           name: info.name,
           future,
           lapsed: !future && info.pastEndDate,
@@ -797,9 +798,11 @@ map.on('load', async () => {
   // pixel, since closure lines are thin. Only visible layers return features.
   const HIT = 10;
   function closuresNear(point) {
+    // Only query the wall layer if it exists; querying a missing layer makes the whole call fail
+    const layers = map.getLayer(WALL_LAYER) ? [...CLOSURE_LAYERS, WALL_LAYER] : CLOSURE_LAYERS;
     return map.queryRenderedFeatures(
       [[point.x - HIT, point.y - HIT], [point.x + HIT, point.y + HIT]],
-      { layers: CLOSURE_LAYERS }
+      { layers }
     );
   }
 
@@ -832,9 +835,13 @@ map.on('load', async () => {
     if (planMode) return;
     const hits = closuresNear(e.point);
     if (!hits.length) return;
+    // A wall under the tap wins, so tapping a wall doesn't open the detour behind it.
+    // Walls are polygons, so nearestFeature (which measures line segments) only applies to line hits.
+    const wallHit = hits.find(f => f.layer && f.layer.id === WALL_LAYER);
+    const pick = wallHit || nearestFeature(e.point, hits);
     new maplibregl.Popup({ maxWidth: '240px' })
       .setLngLat(e.lngLat)
-      .setDOMContent(buildClosurePopup(nearestFeature(e.point, hits).properties))
+      .setDOMContent(buildClosurePopup(pick.properties))
       .addTo(map);
   });
 

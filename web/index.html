@@ -877,8 +877,8 @@ map.on('load', async () => {
   // Route alternatives, active closure overlays, and weather-aware scoring.
   map.addSource('route-options', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
   map.addSource('route-hits', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
-  map.addLayer({ id: 'route-line', type: 'line', source: 'route',
-    paint: { 'line-color': '#1a73e8', 'line-width': 5.5, 'line-opacity': 0.9 } });
+//  map.addLayer({ id: 'route-line', type: 'line', source: 'route',
+//    paint: { 'line-color': '#1a73e8', 'line-width': 5.5, 'line-opacity': 0.9 } });
   map.addSource('saved-ride-route', {
     type: 'geojson',
     data: { type: 'FeatureCollection', features: [] },

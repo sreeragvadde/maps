@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Cycling Closures Map</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1a1a1a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="vendor/maplibre-gl.css">
+<script src="vendor/maplibre-gl.js"></script>
+<script src="vendor/turf.min.js"></script>
+<script src="routing.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; }
+  #map { position: absolute; inset: 0; }
+
+  /* Legend + layer toggles (bottom sheet, collapsible) */
+  #panel {
+    position: absolute; z-index: 2;
+    left: 8px; right: 8px;
+    bottom: calc(30px + env(safe-area-inset-bottom));
+    max-width: 420px;
+    background: rgba(255,255,255,0.96); color: #1a1a1a;
+    border-radius: 11px; box-shadow: 0 1px 6px rgba(0,0,0,0.3);
+    font: 14px/1.4 system-ui, sans-serif;
+  }
+  #panel-toggle {
+    width: 100%; box-sizing: border-box; min-height: 44px;
+    padding: 0 14px; border: 0; background: none; color: inherit;
+    font: inherit; font-weight: 600; text-align: left; cursor: pointer;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  #panel-body { padding: 0 14px 8px; }
+  #panel.collapsed #panel-body { display: none; }
+  #panel-toggle .chev { transition: transform .15s; }
+  #panel.collapsed #panel-toggle .chev { transform: rotate(180deg); }
+
+  .row {
+    display: flex; align-items: center; gap: 10px;
+    min-height: 40px; cursor: pointer;
+  }
+  .row.static { cursor: default; }
+  .row input { width: 20px; height: 20px; margin: 0; flex: none; }
+  .row .spacer { width: 20px; flex: none; }
+  .swatch { width: 22px; height: 4px; border-radius: 2px; flex: none; }
+
+  /* Freshness pill */
+  #updated {
+    position: absolute; z-index: 2; left: 8px;
+    top: calc(8px + env(safe-area-inset-top));
+    background: rgba(255,255,255,0.96); color: #1a1a1a;
+    padding: 6px 10px; border-radius: 999px;
+    font: 12px/1.2 system-ui, sans-serif;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.25);
+  }
+  #updated.stale { background: #fef3c7; color: #78350f; }
+  #updated:empty { display: none; }
+  /* Network loading indicator (sits just below the freshness pill) */
+  #loading {
+    position: absolute; z-index: 2; left: 8px;
+    top: calc(40px + env(safe-area-inset-top));
+    background: rgba(255,255,255,0.96); color: #1a1a1a;
+    padding: 6px 10px; border-radius: 999px;
+    font: 12px/1.2 system-ui, sans-serif;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.25);
+  }
+  #loading[hidden] { display: none; }
+
+    /* Data-scope banner (SF: SFMTA-only disclaimer) */
+  #scope-note {
+    position: absolute; z-index: 2; left: 8px; right: 8px;
+    bottom: calc(24px + env(safe-area-inset-bottom));
+    background: rgba(255,255,255,0.96); color: #1a1a1a;
+    padding: 6px 10px; border-radius: 10px;
+    font: 12px/1.3 system-ui, sans-serif;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.25);
+  }
+  #scope-note:empty { display: none; }
+
+  /* Load-failure banner */
+  #error {
+    position: absolute; z-index: 3; left: 8px; right: 8px;
+    top: calc(44px + env(safe-area-inset-top));
+    background: #fef2f2; color: #7f1d1d; border: 1px solid #fecaca;
+    padding: 10px 12px; border-radius: 8px;
+    font: 14px/1.4 system-ui, sans-serif;
+  }
+  #error:empty { display: none; }
+
+  .maplibregl-popup-content {
+    font: 14px/1.5 system-ui, sans-serif; max-width: 240px;
+    padding: 12px 28px 12px 12px;
+  }
+  .maplibregl-popup-close-button { font-size: 22px; width: 32px; height: 32px; }
+  .maplibregl-ctrl-top-right { top: env(safe-area-inset-top); }
+
+  /* First-visit welcome popup */
+    #welcome {
+    position: absolute; inset: 0; z-index: 10;
+    display: flex; align-items: center; justify-content: center;
+    padding: 16px; box-sizing: border-box;
+    background: rgba(0,0,0,0.45);
+  }
+  #welcome[hidden] { display: none; }
+  #welcome .card {
+    max-width: 340px; background: #fff; color: #1a1a1a;
+    border-radius: 14px; padding: 20px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.35);
+    font: 15px/1.5 system-ui, sans-serif;
+  }
+  #welcome h2 { margin: 0 0 8px; font-size: 18px; }
+  #welcome p { margin: 0 0 16px; }
+  #welcome button {
+    width: 100%; min-height: 44px; border: 0; border-radius: 10px;
+    background: #1a1a1a; color: #fff; font: inherit; font-weight: 600; cursor: pointer;
+  }
+</style>
+<style>
+  #route-banner { position: fixed; top: calc(env(safe-area-inset-top, 0px) + 8px); left: 50%;
+    transform: translateX(-50%); max-width: 90vw; background: #fff; padding: 6px 12px;
+    border-radius: 16px; font: 14px sans-serif; box-shadow: 0 1px 4px rgba(0,0,0,.3);
+    z-index: 5; white-space: normal; }
+  #route-banner:empty { display: none; }
+  #plan-btn { position: fixed; top: calc(env(safe-area-inset-top, 0px) + 56px); right: 10px;
+    z-index: 5; padding: 8px 12px; border-radius: 8px; border: 0;
+    background: #1a73e8; color: #fff; font: 14px sans-serif; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="updated"></div>
+<div id="scope-note" role="note"></div>
+<div id="loading" hidden>Loading cycling network…</div>
+<div id="error" role="alert"></div>
+
+<div id="welcome" role="dialog" aria-modal="true" aria-labelledby="welcome-title" hidden>
+  <div class="card">
+    <h2 id="welcome-title"></h2>
+    <p>See where streets and paths are closed or restricted right now. Tap a <strong style="color:#e11d48">red line</strong> for a closure<span id="detour-hint"> or a <strong style="color:#7c3aed">purple dotted line</strong> for its detour</span>.</p>
+    <button id="welcome-close">Got it</button>
+  </div>
+</div>
+
+<div id="panel">
+  <button id="panel-toggle" aria-expanded="true">
+    <span>Legend and layers</span><span class="chev">▾</span>
+  </button>
+  <div id="panel-body">
+    <label class="row">
+      <input type="checkbox" id="t-network" checked>
+      <span class="swatch" style="background:#7a8ca5"></span> Cycling network
+    </label>
+    <label class="row">
+      <input type="checkbox" id="t-unconfirmed" checked>
+      <span class="swatch" style="background:#7a8ca5;opacity:0.5"></span> Unconfirmed paths
+    </label>
+    <label class="row">
+      <input type="checkbox" id="t-current" checked>
+      <span class="swatch" style="background:#e11d48"></span> Closed now
+    </label>
+    <label class="row">
+      <input type="checkbox" id="t-future" checked>
+      <span class="swatch" style="background:#e11d48;opacity:0.35"></span> Closed (upcoming)
+    </label>
+    <label class="row" id="row-reduced">
+      <input type="checkbox" id="t-reduced" checked>
+      <span class="swatch" style="background:#f59e0b"></span> Lanes reduced (may be passable)
+    </label>
+    <label class="row">
+      <input type="checkbox" id="t-detour" checked>
+      <span class="swatch" style="background:radial-gradient(circle at 2px 2px,#7c3aed 1.8px,transparent 2.2px) 0 0/6px 4px repeat-x"></span> Detour    </label>
+  </div>
+</div>
+<div id="route-banner"></div>
+<button id="plan-btn" type="button">Plan route</button>
+<script>
+
+const CITY = {
+  name: 'Calgary', center: [-114.0719, 51.0447], zoom: 11, timezone: 'America/Edmonton',
+  dataDir: '../data', network: true,
+  attribution: 'City of Calgary Open Data (Open Government Licence - Calgary)'
+};
+document.title = CITY.name + ' Cycling Closures Map';
+document.getElementById('welcome-title').textContent = CITY.name + ' Cycling Closures Map';
+
+const map = new maplibregl.Map({
+  container: 'map',
+  style: 'https://tiles.openfreemap.org/styles/liberty',
+  center: CITY.center,
+  zoom: CITY.zoom,
+  attributionControl: {
+    compact: true,
+    customAttribution:
+      '© OpenStreetMap contributors (ODbL) · ' +
+      CITY.attribution
+  }
+});
+
+map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
+map.addControl(new maplibregl.GeolocateControl({
+  positionOptions: { enableHighAccuracy: true },
+  trackUserLocation: true,
+  showUserLocation: true
+}), 'top-right');
+
+// Collapsible panel; start collapsed on small screens so the map is visible.
+const panel = document.getElementById('panel');
+const panelToggle = document.getElementById('panel-toggle');
+function setCollapsed(c) {
+  panel.classList.toggle('collapsed', c);
+  panelToggle.setAttribute('aria-expanded', String(!c));
+}
+panelToggle.addEventListener('click', () =>
+  setCollapsed(!panel.classList.contains('collapsed')));
+if (window.matchMedia('(max-width: 600px)').matches) setCollapsed(true);
+
+// First-visit welcome. localStorage can throw (private mode), so every access is guarded.
+(function () {
+  const KEY = 'seenWelcome';
+  const el = document.getElementById('welcome');
+  const btn = document.getElementById('welcome-close');
+  let seen = false;
+  try { seen = localStorage.getItem(KEY) === '1'; } catch (e) {}
+  if (seen) return;
+
+  el.hidden = false;
+  btn.focus();
+  function close() {
+    el.hidden = true;
+    try { localStorage.setItem(KEY, '1'); } catch (e) {}
+    document.removeEventListener('keydown', onKey);
+  }
+  function onKey(e) { if (e.key === 'Escape') close(); }
+  btn.addEventListener('click', close);
+  document.addEventListener('keydown', onKey);
+})();
+
+// Build a popup DOM tree without innerHTML — closure text comes from an
+// external feed (City ArcGIS `CLOSURE_DETOUR` etc.), so it must not be
+// interpreted as markup.
+function buildClosurePopup(props) {
+  const fmt = iso => new Date(iso).toLocaleString('en-US', { timeZone: CITY.timezone,
+    weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  const future = props.calgary_temporal_status === 'FUTURE';
+  const when = (props.window_start_utc && props.window_end_utc)
+    ? (future ? `Starts ${fmt(props.window_start_utc)} — until ${fmt(props.window_end_utc)}`
+              : `Now — until ${fmt(props.window_end_utc)}`)
+    : future
+      ? `Starts ${props.start_date || 'date TBD'}`
+      : `Since ${props.start_date || 'unknown'}${props.end_date ? ' — expected until ' + props.end_date : ''}`;
+
+  const root = document.createElement('div');
+
+  const heading = document.createElement('strong');
+  heading.textContent = props.status === 'detour' ? 'Detour'
+    : props.status === 'reduced' ? 'Lane restriction (street may still be passable)' : 'Closed';
+  root.appendChild(heading);
+
+  root.appendChild(document.createElement('br'));
+
+  if (props.detour_note) {
+    root.appendChild(document.createTextNode(props.detour_note));
+    root.appendChild(document.createElement('br'));
+  }
+
+  const em = document.createElement('em');
+  em.textContent = when;
+  root.appendChild(em);
+
+  return root;
+}
+
+function showError(msg) {
+  document.getElementById('error').textContent = msg;
+}
+
+function showUpdated(generated) {
+  const d = new Date(generated);
+  if (!generated || isNaN(d)) return;   // no valid date, no pill
+  const el = document.getElementById('updated');
+  const hasTime = /T\d{2}:\d{2}/.test(generated);
+
+  function render() {
+    if (!hasTime) {   // old date-only format: don't fake precision
+      el.textContent = 'Closures updated ' +
+        d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      return;
+    }
+    const mins = Math.max(0, Math.round((Date.now() - d) / 60000));
+    let ago;
+    if (mins < 1) ago = 'just now';
+    else if (mins < 60) ago = `${mins} min ago`;
+    else if (mins < 48 * 60) {
+      const h = Math.round(mins / 60);
+      ago = `${h} hour${h === 1 ? '' : 's'} ago`;
+    } else ago = `${Math.round(mins / 1440)} days ago`;
+    el.textContent = `Closures updated ${ago}`;
+    el.classList.toggle('stale', mins > 6 * 60);
+  }
+  render();
+  setInterval(render, 60000);
+}
+
+// Show/hide layers; ignore layers that haven't loaded yet.
+function setVis(ids, on) {
+  ids.forEach(id => {
+    if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
+  });
+}
+// Wire a checkbox; returns a function that re-applies its state later.
+function wireToggle(checkboxId, layerIds) {
+  const cb = document.getElementById(checkboxId);
+  cb.addEventListener('change', () => setVis(layerIds, cb.checked));
+  return () => setVis(layerIds, cb.checked);
+}
+
+const CLOSURE_LAYERS = ['closures-current', 'closures-future', 'closures-detour',
+                        'closures-reduced-current', 'closures-reduced-future'];
+
+let planMode = false, pts = [], markers = [];
+let closuresData = null;   // set once closures load
+let generatedAt = null;    // the `generated` timestamp
+
+map.on('load', async () => {
+  const loading = document.getElementById('loading');
+
+  // 1. Closures first: small, and the point of the app
+  try {
+    const r = await fetch(CITY.dataDir + '/closures.geojson');
+    if (!r.ok) throw new Error('closures HTTP ' + r.status);
+    const closures = await r.json();
+    refreshTemporal(closures);   // live CURRENT/FUTURE/PAST from the UTC window
+    showUpdated(closures.generated);
+    document.getElementById('scope-note').textContent = closures.scope_note || '';
+    closuresData = closures;
+    generatedAt = closures.generated;
+    map.addSource('closures', { type: 'geojson', data: closures });
+  } catch (err) {
+    console.error(err);
+    showError('Could not load closure data. Check your connection and reload.');
+    loading.hidden = true;
+    return;
+  }
+
+  map.addLayer({ id: 'closures-current', type: 'line', source: 'closures',
+    filter: ['all', ['==', ['get', 'status'], 'closed'], ['==', ['get', 'calgary_temporal_status'], 'CURRENT']],
+    paint: { 'line-color': '#e11d48', 'line-width': 4 } });
+  map.addLayer({ id: 'closures-future', type: 'line', source: 'closures',
+    filter: ['all', ['==', ['get', 'status'], 'closed'], ['==', ['get', 'calgary_temporal_status'], 'FUTURE']],
+    paint: { 'line-color': '#e11d48', 'line-width': 4, 'line-opacity': 0.4, 'line-dasharray': [2, 2] } });
+  map.addLayer({ id: 'closures-detour', type: 'line', source: 'closures',
+    filter: ['==', ['get', 'status'], 'detour'],
+    paint: { 'line-color': '#7c3aed', 'line-width': 3, 'line-dasharray': [2, 1]  } });
+
+  // Lane restrictions: amber, drawn under the red full closures
+  map.addLayer({ id: 'closures-reduced-current', type: 'line', source: 'closures',
+    filter: ['all', ['==', ['get', 'status'], 'reduced'], ['==', ['get', 'calgary_temporal_status'], 'CURRENT']],
+    paint: { 'line-color': '#f59e0b', 'line-width': 3 } }, 'closures-current');
+  map.addLayer({ id: 'closures-reduced-future', type: 'line', source: 'closures',
+    filter: ['all', ['==', ['get', 'status'], 'reduced'], ['==', ['get', 'calgary_temporal_status'], 'FUTURE']],
+    paint: { 'line-color': '#f59e0b', 'line-width': 3, 'line-opacity': 0.5, 'line-dasharray': [2, 2] } }, 'closures-current');
+  wireToggle('t-reduced', ['closures-reduced-current', 'closures-reduced-future']);
+  if (!closuresData.features.some(f => f.properties.status === 'reduced'))
+    document.getElementById('row-reduced').style.display = 'none';   // e.g. Calgary
+
+  // Re-evaluate current/upcoming against the clock every minute
+  setInterval(() => {
+    if (refreshTemporal(closuresData)) map.getSource('closures').setData(closuresData);
+  }, 60000);
+
+  wireToggle('t-current', ['closures-current']);
+  wireToggle('t-future', ['closures-future']);
+  wireToggle('t-detour', ['closures-detour']);
+  const tNetwork = document.getElementById('t-network');
+  const tUnconfirmed = document.getElementById('t-unconfirmed');
+
+  function updateNetworkVis() {
+    const net = tNetwork.checked;
+    setVis(['network-confirmed'], net);
+    setVis(['network-unconfirmed'], net && tUnconfirmed.checked);
+    tUnconfirmed.disabled = !net;   // greyed out when the whole network is hidden
+  }
+  tNetwork.addEventListener('change', updateNetworkVis);
+  tUnconfirmed.addEventListener('change', updateNetworkVis);
+
+  // Fat-finger tolerance: query a box around the tap instead of a single
+  // pixel, since closure lines are thin. Only visible layers return features.
+  const HIT = 10;
+  function closuresNear(point) {
+    return map.queryRenderedFeatures(
+      [[point.x - HIT, point.y - HIT], [point.x + HIT, point.y + HIT]],
+      { layers: CLOSURE_LAYERS }
+    );
+  }
+
+  // Distance in screen pixels from point p to segment a-b
+  function segDist(p, a, b) {
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len2 = dx * dx + dy * dy;
+    const t = len2 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2)) : 0;
+    return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+  }
+
+  // Of the features in the hit box, return the one whose line is nearest the tap
+  function nearestFeature(point, feats) {
+    let best = feats[0], bestD = Infinity;
+    for (const f of feats) {
+      const g = f.geometry;
+      const lines = g.type === 'LineString' ? [g.coordinates]
+                  : g.type === 'MultiLineString' ? g.coordinates : [];
+      for (const line of lines) {
+        for (let i = 0; i < line.length - 1; i++) {
+          const d = segDist(point, map.project(line[i]), map.project(line[i + 1]));
+          if (d < bestD) { bestD = d; best = f; }
+        }
+      }
+    }
+    return best;
+  }
+
+  map.on('click', (e) => {
+    if (planMode) return;
+    const hits = closuresNear(e.point);
+    if (!hits.length) return;
+    new maplibregl.Popup({ maxWidth: '240px' })
+      .setLngLat(e.lngLat)
+      .setDOMContent(buildClosurePopup(nearestFeature(e.point, hits).properties))
+      .addTo(map);
+  });
+
+  // Pointer cursor on desktop (no-op on touch)
+  map.on('mousemove', (e) => {
+    map.getCanvas().style.cursor = closuresNear(e.point).length ? 'pointer' : '';
+  });
+
+  // 2. Network in the background, inserted beneath the closure layers
+  if (CITY.network) {
+    loading.hidden = false;
+    try {
+      const r = await fetch(CITY.dataDir + '/network.geojson');
+      if (!r.ok) throw new Error('network HTTP ' + r.status);
+      const network = await r.json();
+      map.addSource('network', { type: 'geojson', data: network });
+      map.addLayer({ id: 'network-confirmed', type: 'line', source: 'network',
+        filter: ['==', ['get', 'bicycle_access'], 'designated'],
+        paint: { 'line-color': '#7a8ca5', 'line-width': 1.5, 'line-opacity': 0.7 } }, 'closures-current');
+      map.addLayer({ id: 'network-unconfirmed', type: 'line', source: 'network',
+        filter: ['!=', ['get', 'bicycle_access'], 'designated'],
+        paint: { 'line-color': '#7a8ca5', 'line-width': 1.2, 'line-opacity': 0.4 } }, 'closures-current');
+      updateNetworkVis();   // honor checkboxes toggled while loading
+    } catch (err) {
+      console.error(err);
+      showError('Closures loaded, but the cycling network could not be loaded.');
+    } finally {
+      loading.hidden = true;
+    }
+  }
+
+  // routing starts
+  map.addSource('route', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+  map.addSource('route-hits', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+  map.addLayer({ id: 'route-line', type: 'line', source: 'route',
+    paint: { 'line-color': '#1a73e8', 'line-width': 5, 'line-opacity': 0.85 } });
+  map.addLayer({ id: 'route-hits', type: 'line', source: 'route-hits',
+    filter: ['!', ['get', 'possible']],
+    paint: { 'line-color': ['case', ['get', 'lapsed'], '#f29900', '#d93025'],
+            'line-width': 9, 'line-opacity': 0.9 } });
+  // Lane restrictions: dashed amber, so they read as "maybe", not "blocked"
+  map.addLayer({ id: 'route-hits-possible', type: 'line', source: 'route-hits',
+    filter: ['get', 'possible'],
+    paint: { 'line-color': '#f59e0b', 'line-width': 9, 'line-opacity': 0.9,
+            'line-dasharray': [1.5, 1.5] } });
+
+  const banner = document.getElementById('route-banner');   // add a <div> in the HTML
+
+  function resetRoute() {
+    pts = []; markers.forEach(m => m.remove()); markers = [];
+    map.getSource('route').setData({ type: 'FeatureCollection', features: [] });
+    map.getSource('route-hits').setData({ type: 'FeatureCollection', features: [] });
+    banner.textContent = planMode ? 'Tap your start point' : '';
+  }
+
+  document.getElementById('plan-btn').onclick = () => {
+    planMode = !planMode;
+    document.getElementById('plan-btn').textContent = planMode ? 'Exit route mode' : 'Plan route';
+    resetRoute();
+  };
+
+  map.on('click', async (e) => {
+    if (!planMode) return;
+    if (pts.length === 2) resetRoute();
+    pts.push([e.lngLat.lng, e.lngLat.lat]);
+    markers.push(new maplibregl.Marker({ color: pts.length === 1 ? '#188038' : '#d93025' })
+      .setLngLat(e.lngLat).addTo(map));
+    if (pts.length === 1) { banner.textContent = 'Tap your destination'; return; }
+
+    banner.textContent = 'Routing…';
+    try {
+      const route = await fetchPlainRoute(pts[0], pts[1]);
+      map.getSource('route').setData(route);
+
+      if (!closuresData) {                      // fail closed
+        banner.textContent = 'Route shown, but closure data is unavailable. Can\'t check for closures.';
+        return;
+      }
+
+      // ===== NEW BLOCK STARTS HERE (replaces old `const hits...` through `banner.textContent = ...`) =====
+      const hits = routeCrossesClosures(route, closuresData);
+
+      map.getSource('route-hits').setData({
+        type: 'FeatureCollection',
+        features: hits.map(h => ({
+          ...h.feature,
+          properties: { ...h.feature.properties, lapsed: h.info.pastEndDate, possible: h.info.kind === 'reduced' },
+        })),
+      });
+
+      // one closure can span several features, so group by name
+      const closedByName = new Map(), possibleNames = new Set();
+      for (const h of hits) {
+        if (h.info.kind === 'closed') {
+          closedByName.set(h.info.name, (closedByName.get(h.info.name) || false) || h.info.pastEndDate);
+        } else {
+          possibleNames.add(h.info.name);
+        }
+      }
+      for (const n of closedByName.keys()) possibleNames.delete(n);   // already warned as a closure
+      const parts = [...closedByName].map(([name, lapsed]) =>
+        lapsed ? `${name} ⚑ past listed end date, may be cleared` : name);
+      const maybe = [...possibleNames];
+
+      const stale = (Date.now() - new Date(generatedAt)) > 6 * 3600e3;
+      const km = (route.properties.summary.distance / 1000).toFixed(1);
+      const maybeText = `${maybe.length} lane restriction${maybe.length > 1 ? 's' : ''} ` +
+        `(${maybe.join('; ')}) — the street may still be passable`;
+
+      if (parts.length) {
+        banner.textContent = `⚠ ${km} km route crosses ${parts.length} closure${parts.length > 1 ? 's' : ''}: ${parts.join('; ')}` +
+          (maybe.length ? `. It also passes ${maybeText}` : '');
+      } else if (maybe.length) {
+        banner.textContent = `Heads up: your ${km} km route may be affected by ${maybeText}.`;
+      } else {
+        banner.textContent = `No known closures on this ${km} km route` + (stale ? ' (closure data may be stale)' : '');
+      }
+      // ===== NEW BLOCK ENDS HERE =====
+
+    } catch (err) {
+      console.error('Routing error:', err);
+      banner.textContent = `Couldn't get a route (${err.message}). Try again.`;
+    }
+  });
+  // } catch (err) {
+  // console.error('Routing init failed; map still works', err);
+  // }
+
+});
+</script>
+</body>
+</html>

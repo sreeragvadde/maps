@@ -440,6 +440,7 @@
   const api = {
     DISTANCE_TARGET_M, WEATHER_REFRESH_MS,
     buildNetworkIndex, scoreRoutes, fetchWeather, createTripStore, summarizeRides,
+    sampleRoute, nearbyFeature,
   };
   root.CyclingApp = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Cycling Closures Map</title>
+<title>Revitalize Cycling | Calgary</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1a1a1a">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -13,6 +13,7 @@
 <link rel="stylesheet" href="vendor/maplibre-gl.css">
 <script src="vendor/maplibre-gl.js"></script>
 <script src="vendor/turf.min.js"></script>
+<script src="cycling.js"></script>
 <script src="routing.js"></script>
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; }
@@ -70,7 +71,7 @@
   }
   #loading[hidden] { display: none; }
 
-    /* Data-scope banner (SF: SFMTA-only disclaimer) */
+  /* Data-scope banner */
   #scope-note {
     position: absolute; z-index: 2; left: 8px; right: 8px;
     bottom: calc(24px + env(safe-area-inset-bottom));
@@ -120,14 +121,88 @@
   }
 </style>
 <style>
-  #route-banner { position: fixed; top: calc(env(safe-area-inset-top, 0px) + 8px); left: 50%;
-    transform: translateX(-50%); max-width: 90vw; background: #fff; padding: 6px 12px;
-    border-radius: 16px; font: 14px sans-serif; box-shadow: 0 1px 4px rgba(0,0,0,.3);
-    z-index: 5; white-space: normal; }
+  :root { color-scheme: light; font-family: system-ui, sans-serif; }
+  .app-card { position: fixed; z-index: 4; box-sizing: border-box; color: #15251e;
+    background: rgba(255,255,255,.97); border: 1px solid #d7e2db; border-radius: 16px;
+    box-shadow: 0 8px 28px rgba(19,42,30,.16); }
+  #ride-planner { top: calc(12px + env(safe-area-inset-top)); left: 12px; width: min(390px, calc(100vw - 24px));
+    max-height: min(72vh, 700px); overflow: auto; padding: 16px; }
+  .brand-line { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .brand-line h1 { margin: 0; font-size: 18px; line-height: 1.2; }
+  .brand-line p { margin: 4px 0 0; color: #52635a; font-size: 12px; }
+  .planner-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 14px 0 8px; }
+  .planner-heading h2, #eco-dashboard h2 { margin: 0; font-size: 15px; }
+  .primary-btn, .secondary-btn, .quiet-btn { min-height: 40px; border-radius: 10px; padding: 8px 12px;
+    font: inherit; font-size: 13px; font-weight: 650; cursor: pointer; }
+  .primary-btn { border: 0; background: #176b48; color: #fff; }
+  .primary-btn:hover { background: #105739; }
+  .secondary-btn { border: 1px solid #b9cfc0; background: #f2f8f4; color: #155a3d; }
+  .quiet-btn { border: 0; background: transparent; color: #47584e; }
+  .primary-btn:focus-visible, .secondary-btn:focus-visible, .quiet-btn:focus-visible,
+  input:focus-visible, select:focus-visible { outline: 3px solid #f0a32f; outline-offset: 2px; }
+  .field-label { display: block; margin: 8px 0 4px; font-size: 12px; font-weight: 650; color: #405248; }
+  #departure-time, #baseline-mode { box-sizing: border-box; width: 100%; min-height: 40px; padding: 7px 9px;
+    border: 1px solid #aebfb3; border-radius: 9px; color: #15251e; background: #fff; font: inherit; }
+  #route-banner { margin: 8px 0 0; color: #34483b; font-size: 12px; line-height: 1.4; }
   #route-banner:empty { display: none; }
-  #plan-btn { position: fixed; top: calc(env(safe-area-inset-top, 0px) + 56px); right: 10px;
-    z-index: 5; padding: 8px 12px; border-radius: 8px; border: 0;
-    background: #1a73e8; color: #fff; font: 14px sans-serif; }
+  #weather-summary { margin-top: 10px; padding: 9px 10px; border-radius: 10px; background: #eff6f2;
+    color: #254835; font-size: 12px; line-height: 1.4; }
+  #weather-summary.warning { background: #fff4d8; color: #653e00; }
+  #weather-summary.error { background: #fff0ed; color: #7e271b; }
+  #weather-summary:empty { display: none; }
+  #route-options { display: grid; gap: 8px; margin-top: 10px; }
+  .route-card { width: 100%; text-align: left; border: 1px solid #d7e2db; border-radius: 12px; padding: 10px;
+    background: #fff; color: #19281f; font: inherit; cursor: pointer; }
+  .route-card[aria-pressed="true"] { border: 2px solid #176b48; padding: 9px; background: #f3faf5; }
+  .route-card-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .route-card-title { font-weight: 750; font-size: 13px; }
+  .score-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 54px;
+    min-height: 32px; border-radius: 9px; padding: 0 7px; color: #fff; background: #176b48;
+    font-size: 13px; font-weight: 750; }
+  .route-meta { margin: 5px 0; color: #43564a; font-size: 12px; }
+  .route-explanations { color: #52635a; font-size: 11px; line-height: 1.4; }
+  .score-breakdown { margin-top: 5px; color: #405248; font-size: 10px; }
+  .route-warning { margin-top: 5px; padding: 6px 8px; border-radius: 7px; color: #653e00; background: #fff0c2;
+    font-size: 11px; line-height: 1.35; }
+  #eco-dashboard { right: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); width: min(330px, calc(100vw - 24px));
+    max-height: min(55vh, 520px); overflow: auto; padding: 15px; }
+  .eco-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin: 10px 0; }
+  .eco-stat { border-radius: 10px; padding: 8px; background: #eff6f2; }
+  .eco-stat strong { display: block; font-size: 17px; line-height: 1.2; color: #155a3d; }
+  .eco-stat span { display: block; margin-top: 4px; color: #52635a; font-size: 10px; }
+  #eco-progress { height: 8px; overflow: hidden; border-radius: 8px; background: #e1e9e3; }
+  #eco-progress > span { display: block; width: 0; height: 100%; border-radius: inherit; background: #e2a32e; transition: width .2s; }
+  #goal-copy, #eco-note { margin: 6px 0 10px; color: #52635a; font-size: 11px; line-height: 1.4; }
+  #eco-note.error { color: #8a2b20; }
+  #achievements { display: flex; flex-wrap: wrap; gap: 5px; margin: 8px 0; }
+  .achievement { border-radius: 999px; padding: 4px 8px; color: #31513d; background: #eaf3ec; font-size: 10px; }
+  .achievement.locked { color: #68736b; background: #eef0ee; }
+  #ride-form { margin-top: 10px; padding: 10px; border: 1px solid #d7e2db; border-radius: 10px; }
+  #ride-form[hidden] { display: none; }
+  #ride-form label { display: flex; gap: 8px; align-items: flex-start; margin: 10px 0; font-size: 12px; line-height: 1.4; }
+  #ride-form input[type=checkbox] { width: 18px; height: 18px; flex: none; }
+  .button-row { display: flex; gap: 8px; margin-top: 8px; }
+  .button-row button { flex: 1; }
+  #ride-history { margin-top: 10px; }
+  #ride-history summary { cursor: pointer; color: #254835; font-size: 12px; font-weight: 650; }
+  #ride-list { margin: 7px 0 0; padding: 0; list-style: none; }
+  #ride-list li { padding: 7px 0; border-top: 1px solid #e4ebe6; color: #405248; font-size: 11px; line-height: 1.4; }
+  #eco-dashboard .disclaimer { margin: 10px 0 0; color: #5b675f; font-size: 10px; line-height: 1.4; }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+    clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+  #panel { z-index: 6; max-height: 38vh; overflow: auto; }
+  #updated { left: auto; right: 12px; }
+  #loading { left: auto; right: 12px; }
+  @media (max-width: 600px) {
+    #ride-planner { top: calc(8px + env(safe-area-inset-top)); left: 8px; width: min(360px, calc(100vw - 16px));
+      max-height: 42vh; padding: 12px; }
+    #eco-dashboard { right: 8px; bottom: calc(8px + env(safe-area-inset-bottom)); width: min(320px, calc(100vw - 16px));
+      max-height: 35vh; padding: 12px; }
+    #panel { left: auto; right: 8px; top: calc(52vh + 8px); bottom: auto;
+      width: min(180px, calc(100vw - 16px)); max-height: 34vh; }
+    .eco-stats { gap: 4px; }
+    .eco-stat { padding: 6px; }
+  }
 </style>
 </head>
 <body>
@@ -139,8 +214,8 @@
 
 <div id="welcome" role="dialog" aria-modal="true" aria-labelledby="welcome-title" hidden>
   <div class="card">
-    <h2 id="welcome-title"></h2>
-    <p>See where streets and paths are closed or restricted right now. Tap a <strong style="color:#e11d48">red line</strong> for a closure<span id="detour-hint"> or a <strong style="color:#7c3aed">purple dotted line</strong> for its detour</span>.</p>
+    <h2 id="welcome-title">Revitalize Cycling</h2>
+    <p>Plan a cycling route with forecast context, mapped cycling infrastructure, and known Calgary closures. Route scores are guidance, not a safety guarantee.</p>
     <button id="welcome-close">Got it</button>
   </div>
 </div>
@@ -175,8 +250,63 @@
       <span class="swatch" style="background:radial-gradient(circle at 2px 2px,#7c3aed 1.8px,transparent 2.2px) 0 0/6px 4px repeat-x"></span> Detour    </label>
   </div>
 </div>
-<div id="route-banner"></div>
-<button id="plan-btn" type="button">Plan route</button>
+<section id="ride-planner" class="app-card" aria-label="Cycling route planner">
+  <div class="brand-line">
+    <div><h1>Revitalize Cycling</h1><p>Plan a better ride through Calgary</p></div>
+    <span aria-hidden="true">🚲</span>
+  </div>
+  <p style="margin:5px 0 0;font-size:10px;color:#52635a">
+    Routing by <a href="https://openrouteservice.org/" target="_blank" rel="noreferrer">OpenRouteService</a>
+  </p>
+  <div class="planner-heading"><h2>Route planner</h2>
+    <button id="plan-btn" class="primary-btn" type="button">Plan a route</button>
+  </div>
+  <label class="field-label" for="departure-time">Depart at (Calgary local time)</label>
+  <input id="departure-time" type="datetime-local">
+  <p id="route-banner" role="status" aria-live="polite">Choose “Plan a route”, then tap your start and destination on the map.</p>
+  <div id="weather-summary" role="status" aria-live="polite"></div>
+  <p style="margin:5px 0 0;font-size:10px;color:#52635a">
+    Forecast data by <a href="https://open-meteo.com/" target="_blank" rel="noreferrer">Open-Meteo</a>
+  </p>
+  <div id="route-options" aria-label="Route alternatives"></div>
+  <p style="margin:7px 0 0;color:#52635a;font-size:10px;line-height:1.4">
+    Route scores use the same fixed 100-point benchmark for every trip: mapped road and cycling attributes,
+    weather, a 5 km distance target, and elevation. Missing data earns no points; coverage is shown separately.
+  </p>
+</section>
+
+<aside id="eco-dashboard" class="app-card" aria-labelledby="eco-title">
+  <h2 id="eco-title">Your cycling impact</h2>
+  <div class="eco-stats">
+    <div class="eco-stat"><strong id="eco-distance">0</strong><span>km cycled</span></div>
+    <div class="eco-stat"><strong id="eco-co2">0</strong><span>kg CO₂ estimate</span></div>
+    <div class="eco-stat"><strong id="eco-points">0</strong><span>eco points</span></div>
+  </div>
+  <div id="eco-progress" role="progressbar" aria-label="Progress to 100 km cycling goal" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span></span></div>
+  <p id="goal-copy">100 km cycling goal · 0% complete</p>
+  <p id="eco-points-rule" style="margin:0;color:#52635a;font-size:10px">Earn 10 points per km only for a confirmed car-replacing ride.</p>
+  <div id="achievements" aria-label="Achievements"></div>
+  <p id="eco-note" role="status"></p>
+  <button id="open-ride-form" class="secondary-btn" type="button" disabled>Log completed ride</button>
+  <form id="ride-form" hidden>
+    <label class="field-label" for="baseline-mode">What would you have used instead?</label>
+    <select id="baseline-mode">
+      <option value="car">Car, solo driver</option>
+      <option value="rideshare">Shared car / rideshare</option>
+      <option value="transit">Public transit</option>
+      <option value="other">Walking or other zero-tailpipe travel</option>
+    </select>
+    <label><input id="car-replacement" type="checkbox">
+      <span>This ride replaced a trip I would otherwise have made by car. Points are only awarded when this is selected and the baseline is a car.</span>
+    </label>
+    <div class="button-row">
+      <button class="primary-btn" type="submit">Save completed ride</button>
+      <button id="cancel-ride-form" class="quiet-btn" type="button">Cancel</button>
+    </div>
+  </form>
+  <details id="ride-history"><summary>Ride history (0)</summary><ul id="ride-list"></ul></details>
+  <p class="disclaimer">CO₂ values are estimates relative to your selected alternative, using 0.192 kg CO₂/km for solo driving. Cycling does not guarantee a safe route; forecasts and mapped road tags can be incomplete.</p>
+</aside>
 <script>
 
 const CITY = {
@@ -184,8 +314,7 @@ const CITY = {
   dataDir: '../data', network: true,
   attribution: 'City of Calgary Open Data (Open Government Licence - Calgary)'
 };
-document.title = CITY.name + ' Cycling Closures Map';
-document.getElementById('welcome-title').textContent = CITY.name + ' Cycling Closures Map';
+document.title = 'Revitalize Cycling | ' + CITY.name;
 
 const map = new maplibregl.Map({
   container: 'map',
@@ -345,6 +474,114 @@ const CLOSURE_LAYERS = ['closures-current', 'closures-future', 'closures-detour'
 let planMode = false, pts = [], markers = [];
 let closuresData = null;   // set once closures load
 let generatedAt = null;    // the `generated` timestamp
+let networkIndex = null;
+let routeOptions = [];
+let selectedRouteOption = null;
+let weatherRefreshTimer = null;
+let weatherRequestVersion = 0;
+let routeRequestVersion = 0;
+const routeColors = ['#087f5b', '#2563eb', '#9a3412'];
+
+function localDateTimeValue(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: CITY.timezone, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}T${values.hour}:${values.minute}`;
+}
+
+function parseCalgaryDateTime(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value);
+  if (!match) return NaN;
+  const [, year, month, day, hour, minute] = match.map(Number);
+  const target = Date.UTC(year, month - 1, day, hour, minute);
+  let timestamp = target;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: CITY.timezone, year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+    }).formatToParts(new Date(timestamp));
+    const values = Object.fromEntries(parts.map(part => [part.type, Number(part.value)]));
+    const represented = Date.UTC(values.year, values.month - 1, values.day,
+      values.hour, values.minute, values.second);
+    timestamp += target - represented;
+  }
+  return timestamp;
+}
+
+document.getElementById('departure-time').value = localDateTimeValue();
+
+const memoryStorage = (() => {
+  const values = new Map();
+  return {
+    getItem: key => values.get(key) || null,
+    setItem: (key, value) => values.set(key, value),
+  };
+})();
+let tripStore;
+let ecoState;
+try {
+  tripStore = CyclingApp.createTripStore(window.localStorage);
+  ecoState = tripStore.load();
+} catch (error) {
+  console.error('Local trip storage is unavailable:', error);
+  tripStore = CyclingApp.createTripStore(memoryStorage);
+  ecoState = tripStore.load();
+  ecoState.storageAvailable = false;
+  ecoState.storageError = error;
+}
+
+function renderEcoDashboard() {
+  const summary = CyclingApp.summarizeRides(ecoState.rides || []);
+  document.getElementById('eco-distance').textContent = summary.distanceKm.toFixed(1);
+  document.getElementById('eco-co2').textContent = summary.co2Kg.toFixed(1);
+  document.getElementById('eco-points').textContent = summary.points.toLocaleString();
+  const progress = Math.min(100, summary.distanceKm);
+  document.querySelector('#eco-progress > span').style.width = `${progress}%`;
+  document.getElementById('eco-progress').setAttribute('aria-valuenow', progress.toFixed(0));
+  document.getElementById('goal-copy').textContent =
+    `100 km cycling goal · ${progress.toFixed(0)}% complete`;
+
+  const achievements = [
+    { title: 'First ride', earned: summary.rideCount >= 1 },
+    { title: 'First car-replacing ride', earned: summary.carReplacements >= 1 },
+    { title: '50 km cycled', earned: summary.distanceKm >= 50 },
+    { title: '10 car-replacing rides', earned: summary.carReplacements >= 10 },
+  ];
+  const achievementList = document.getElementById('achievements');
+  achievementList.replaceChildren(...achievements.map(item => {
+    const badge = document.createElement('span');
+    badge.className = `achievement${item.earned ? '' : ' locked'}`;
+    badge.textContent = `${item.earned ? '✓ ' : '○ '}${item.title}`;
+    return badge;
+  }));
+
+  const rideList = document.getElementById('ride-list');
+  rideList.replaceChildren();
+  (ecoState.rides || []).slice(0, 8).forEach(ride => {
+    const item = document.createElement('li');
+    const date = new Date(ride.date).toLocaleDateString();
+    item.textContent = `${date} · ${ride.distanceKm.toFixed(1)} km · ${ride.points} pts · ` +
+      `${ride.co2Kg.toFixed(2)} kg CO₂ estimate (${ride.mode})`;
+    rideList.appendChild(item);
+  });
+  if (!summary.rideCount) {
+    const empty = document.createElement('li');
+    empty.textContent = 'No completed rides yet. Plan a route, then log it when you finish.';
+    rideList.appendChild(empty);
+  }
+  document.querySelector('#ride-history summary').textContent =
+    `Ride history (${summary.rideCount})`;
+
+  const note = document.getElementById('eco-note');
+  note.classList.toggle('error', ecoState.storageAvailable === false);
+  note.textContent = ecoState.storageAvailable === false
+    ? 'Progress is temporary because browser storage is unavailable.'
+    : '';
+}
+
+renderEcoDashboard();
 
 let is3D = false;
 function set3D(on) {
@@ -513,6 +750,7 @@ map.on('load', async () => {
       const r = await fetch(CITY.dataDir + '/network.geojson');
       if (!r.ok) throw new Error('network HTTP ' + r.status);
       const network = await r.json();
+      networkIndex = CyclingApp.buildNetworkIndex(network);
       map.addSource('network', { type: 'geojson', data: network });
       map.addLayer({ id: 'network-confirmed', type: 'line', source: 'network',
         filter: ['==', ['get', 'bicycle_access'], 'designated'],
@@ -529,11 +767,16 @@ map.on('load', async () => {
     }
   }
 
-  // routing starts
-  map.addSource('route', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+  // Route alternatives, active closure overlays, and weather-aware scoring.
+  map.addSource('route-options', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
   map.addSource('route-hits', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
-  map.addLayer({ id: 'route-line', type: 'line', source: 'route',
-    paint: { 'line-color': '#1a73e8', 'line-width': 5, 'line-opacity': 0.85 } });
+  map.addLayer({ id: 'route-lines', type: 'line', source: 'route-options',
+    paint: {
+      'line-color': ['match', ['get', 'optionIndex'],
+        0, routeColors[0], 1, routeColors[1], 2, routeColors[2], '#475569'],
+      'line-width': ['case', ['get', 'selected'], 6, 3],
+      'line-opacity': ['case', ['get', 'selected'], 0.95, 0.45],
+    } });
   map.addLayer({ id: 'route-hits', type: 'line', source: 'route-hits',
     filter: ['!', ['get', 'possible']],
     paint: { 'line-color': ['case', ['get', 'lapsed'], '#f29900', '#d93025'],
@@ -544,20 +787,248 @@ map.on('load', async () => {
     paint: { 'line-color': '#f59e0b', 'line-width': 9, 'line-opacity': 0.9,
             'line-dasharray': [1.5, 1.5] } });
 
-  const banner = document.getElementById('route-banner');   // add a <div> in the HTML
+  const banner = document.getElementById('route-banner');
+  const weatherSummary = document.getElementById('weather-summary');
+  const routeList = document.getElementById('route-options');
+  const logRideButton = document.getElementById('open-ride-form');
+  const rideForm = document.getElementById('ride-form');
+  let routeMessage = 'Choose “Plan a route”, then tap your start and destination on the map.';
+
+  function updateRouteSource() {
+    const selected = routeOptions.find(item => item.option === selectedRouteOption);
+    map.getSource('route-options').setData({
+      type: 'FeatureCollection',
+      features: routeOptions.map(item => ({
+        ...item.route,
+        properties: {
+          ...(item.route.properties || {}),
+          optionIndex: item.option,
+          selected: item.option === selectedRouteOption,
+        },
+      })),
+    });
+    const hits = selected?.hits || [];
+    map.getSource('route-hits').setData({
+      type: 'FeatureCollection',
+      features: hits.map(hit => ({
+        ...hit.feature,
+        properties: {
+          ...hit.feature.properties,
+          lapsed: hit.info.pastEndDate,
+          possible: hit.info.kind === 'reduced',
+        },
+      })),
+    });
+    logRideButton.disabled = !selected;
+
+    if (!selected) {
+      banner.textContent = routeMessage;
+      return;
+    }
+    const closed = new Map(), reduced = new Set();
+    for (const hit of hits) {
+      if (hit.info.kind === 'closed') {
+        closed.set(hit.info.name, closed.get(hit.info.name) || hit.info.pastEndDate);
+      } else if (hit.info.kind === 'reduced') reduced.add(hit.info.name);
+    }
+    for (const name of closed.keys()) reduced.delete(name);
+    const stale = generatedAt && Date.now() - Date.parse(generatedAt) > 6 * 3600e3;
+    const warnings = [
+      ...[...closed].map(([name, lapsed]) => lapsed
+        ? `${name} (past listed end date; status may have changed)` : name),
+      ...[...reduced].map(name => `${name} (lane restriction; may still be passable)`),
+    ];
+    const closureText = warnings.length
+      ? `Known closure/restriction warning: ${warnings.join('; ')}.`
+      : `No known closures on this ${ (selected.distance / 1000).toFixed(1) } km option${stale ? ' (closure data may be stale)' : ''}.`;
+    const coverageText = selected.scoreCoverage < 100
+      ? ` Score uses ${selected.scoreCoverage}/100 available data-weight points; unavailable attributes are not guessed.`
+      : '';
+    banner.textContent = `${closureText}${coverageText} ${routeMessage} Route scores are comparative guidance, not a safety guarantee.`;
+  }
+
+  function renderRouteCards() {
+    routeList.replaceChildren();
+    routeOptions.forEach(item => {
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.className = 'route-card';
+      card.setAttribute('aria-pressed', String(item.option === selectedRouteOption));
+      card.setAttribute('aria-label', `Option ${item.rank}, score ${item.score} out of 100, ` +
+        `${(item.distance / 1000).toFixed(1)} kilometres`);
+      card.addEventListener('click', () => {
+        selectedRouteOption = item.option;
+        renderRouteCards();
+        updateRouteSource();
+      });
+
+      const top = document.createElement('div');
+      top.className = 'route-card-top';
+      const title = document.createElement('span');
+      title.className = 'route-card-title';
+      title.textContent = item.route.properties?.routing_profile === 'cycling-road'
+        ? `Road-focused option ${item.rank}`
+        : item.rank === 1 ? 'Best-scoring option' : `Option ${item.rank}`;
+      const badge = document.createElement('span');
+      badge.className = 'score-badge';
+      badge.style.backgroundColor = routeColors[item.option] || '#475569';
+      badge.textContent = `${item.score}/100`;
+      badge.title = 'Universal score from the same fixed 100-point benchmark for every route';
+      top.append(title, badge);
+
+      const meta = document.createElement('p');
+      meta.className = 'route-meta';
+      meta.textContent = `${(item.distance / 1000).toFixed(1)} km · ` +
+        `${Math.max(1, Math.round(item.duration / 60))} min · ` +
+        (item.weather ? item.weather.label : 'Weather unavailable');
+      const explanation = document.createElement('div');
+      explanation.className = 'route-explanations';
+      explanation.textContent = item.explanations.join(' ');
+      const breakdown = document.createElement('div');
+      breakdown.className = 'score-breakdown';
+      const components = item.components;
+      breakdown.textContent = `Score details: road ${formatPoints(components.safety, 25)}, ` +
+        `cycling network ${formatPoints(components.infrastructure, 25)}, ` +
+        `weather ${formatPoints(components.weather, 25)}, ` +
+        `distance ${formatPoints(components.distance, 15)}, ` +
+        `elevation/steepness ${formatPoints(components.elevation, 10)}. ` +
+        `${item.scoreCoverage}/100 benchmark points had data; missing factors add no points.`;
+      card.append(top, meta, explanation, breakdown);
+
+      const warnings = [
+        ...(item.weather?.warnings || []),
+        ...(item.hits?.length ? [`Intersects ${item.hits.length} mapped closure or restriction feature(s).`] : []),
+      ];
+      if (warnings.length) {
+        const warning = document.createElement('div');
+        warning.className = 'route-warning';
+        warning.textContent = warnings.join(' ');
+        card.appendChild(warning);
+      }
+      routeList.appendChild(card);
+    });
+  }
+
+  function formatPoints(value, max) {
+    return Number.isFinite(value) ? `${value.toFixed(1)}/${max}` : `not available/${max}`;
+  }
+
+  function renderWeather(weather, error) {
+    weatherSummary.className = '';
+    if (error) {
+      weatherSummary.classList.add('error');
+      weatherSummary.textContent = `Forecast unavailable (${error}). Routes remain available; weather is excluded from scores.`;
+      return;
+    }
+    if (!weather) {
+      weatherSummary.textContent = 'Loading the departure-hour forecast…';
+      return;
+    }
+    weatherSummary.classList.toggle('warning', weather.warnings.length > 0);
+    const forecastDate = new Date(/[zZ]$/.test(weather.time) ? weather.time : `${weather.time}Z`);
+    const forecastTime = forecastDate.toLocaleString(undefined, {
+      timeZone: CITY.timezone, weekday: 'short', hour: 'numeric', minute: '2-digit',
+    });
+    weatherSummary.textContent = `Open-Meteo forecast · ${forecastTime}: ` +
+      `${weather.label || 'Some weather details unavailable.'}` +
+      (weather.warnings.length ? ` Warning: ${weather.warnings.join(' ')}` : '');
+  }
+
+  async function refreshWeatherAndScores() {
+    if (!routeOptions.length || pts.length !== 2) return;
+    const version = ++weatherRequestVersion;
+    const departureMs = parseCalgaryDateTime(document.getElementById('departure-time').value);
+    if (!Number.isFinite(departureMs)) {
+      renderWeather(null, 'Choose a valid departure time');
+      return;
+    }
+    renderWeather(null);
+    try {
+      const weather = await CyclingApp.fetchWeather(pts[0][1], pts[0][0], departureMs);
+      if (version !== weatherRequestVersion) return;
+      routeOptions = CyclingApp.scoreRoutes(
+        routeGeometriesInOptionOrder(), networkIndex, weather, departureMs);
+      routeOptions.forEach(item => {
+        item.hits = closuresData ? routeCrossesClosures(item.route, closuresData) : [];
+      });
+      const selectedWeather = routeOptions.find(item => item.option === selectedRouteOption)?.weather;
+      renderWeather(selectedWeather || null,
+        selectedWeather ? null : 'No forecast is available for the selected departure time');
+      renderRouteCards();
+      updateRouteSource();
+    } catch (error) {
+      if (version !== weatherRequestVersion) return;
+      console.error('Weather request failed:', error);
+      routeOptions = CyclingApp.scoreRoutes(
+        routeGeometriesInOptionOrder(), networkIndex, null, departureMs);
+      routeOptions.forEach(item => {
+        item.hits = closuresData ? routeCrossesClosures(item.route, closuresData) : [];
+      });
+      renderWeather(null, error.message);
+      renderRouteCards();
+      updateRouteSource();
+    }
+  }
+
+  function routeGeometriesInOptionOrder() {
+    return routeOptions.slice().sort((a, b) => a.option - b.option)
+      .map(item => item.route);
+  }
 
   function resetRoute() {
+    routeRequestVersion++;
+    weatherRequestVersion++;
+    clearInterval(weatherRefreshTimer);
+    weatherRefreshTimer = null;
     pts = []; markers.forEach(m => m.remove()); markers = [];
-    map.getSource('route').setData({ type: 'FeatureCollection', features: [] });
-    map.getSource('route-hits').setData({ type: 'FeatureCollection', features: [] });
-    banner.textContent = planMode ? 'Tap your start point' : '';
+    routeOptions = [];
+    selectedRouteOption = null;
+    routeList.replaceChildren();
+    weatherSummary.textContent = '';
+    updateRouteSource();
+    routeMessage = planMode ? 'Tap your start point.' : 'Choose “Plan a route”, then tap your start and destination on the map.';
+    banner.textContent = routeMessage;
   }
 
   document.getElementById('plan-btn').onclick = () => {
     planMode = !planMode;
-    document.getElementById('plan-btn').textContent = planMode ? 'Exit route mode' : 'Plan route';
+    document.getElementById('plan-btn').textContent = planMode ? 'Exit route mode' : 'Plan a route';
     resetRoute();
   };
+
+  document.getElementById('departure-time').addEventListener('change', () => {
+    if (routeOptions.length) refreshWeatherAndScores();
+  });
+
+  document.getElementById('open-ride-form').addEventListener('click', () => {
+    rideForm.hidden = false;
+    document.getElementById('baseline-mode').focus();
+  });
+  document.getElementById('cancel-ride-form').addEventListener('click', () => {
+    rideForm.hidden = true;
+  });
+  rideForm.addEventListener('submit', event => {
+    event.preventDefault();
+    const selected = routeOptions.find(item => item.option === selectedRouteOption);
+    if (!selected) return;
+    const mode = document.getElementById('baseline-mode').value;
+    const carReplacement = document.getElementById('car-replacement').checked;
+    const result = tripStore.addRide({
+      distanceKm: selected.distance / 1000,
+      mode,
+      carReplacement,
+      routeName: `Calgary option ${selected.rank}`,
+    });
+    ecoState = result.state;
+    renderEcoDashboard();
+    rideForm.reset();
+    rideForm.hidden = true;
+    document.getElementById('eco-note').textContent = result.ride.carReplacement
+      ? `Ride saved: ${result.ride.points} points and an estimated ${result.ride.co2Kg.toFixed(2)} kg CO₂ avoided.`
+      : `Ride saved without car-replacement points. Estimated ${result.ride.co2Kg.toFixed(2)} kg CO₂ versus your selected travel mode.`;
+    if (ecoState.storageAvailable === false)
+      document.getElementById('eco-note').textContent += ' This change may not persist after closing the browser.';
+  });
 
   map.on('click', async (e) => {
     if (!planMode) return;
@@ -565,66 +1036,42 @@ map.on('load', async () => {
     pts.push([e.lngLat.lng, e.lngLat.lat]);
     markers.push(new maplibregl.Marker({ color: pts.length === 1 ? '#188038' : '#d93025' })
       .setLngLat(e.lngLat).addTo(map));
-    if (pts.length === 1) { banner.textContent = 'Tap your destination'; return; }
+    if (pts.length === 1) {
+      routeMessage = 'Tap your destination.';
+      banner.textContent = routeMessage;
+      return;
+    }
 
-    banner.textContent = 'Routing…';
+    const requestVersion = ++routeRequestVersion;
+    routeMessage = 'Finding cycling route alternatives…';
+    banner.textContent = routeMessage;
     try {
-      const route = await fetchPlainRoute(pts[0], pts[1]);
-      map.getSource('route').setData(route);
-
-      if (!closuresData) {                      // fail closed
-        banner.textContent = 'Route shown, but closure data is unavailable. Can\'t check for closures.';
-        return;
-      }
-
-      // ===== NEW BLOCK STARTS HERE (replaces old `const hits...` through `banner.textContent = ...`) =====
-      const hits = routeCrossesClosures(route, closuresData);
-
-      map.getSource('route-hits').setData({
-        type: 'FeatureCollection',
-        features: hits.map(h => ({
-          ...h.feature,
-          properties: { ...h.feature.properties, lapsed: h.info.pastEndDate, possible: h.info.kind === 'reduced' },
-        })),
+      const routes = await fetchPlainRoutes(pts[0], pts[1]);
+      if (requestVersion !== routeRequestVersion) return;
+      routeMessage = closuresData
+        ? ''
+        : 'Closure data is unavailable; route options cannot be checked against known closures.';
+      routeOptions = CyclingApp.scoreRoutes(
+        routes, networkIndex, null, parseCalgaryDateTime(document.getElementById('departure-time').value));
+      routeOptions.forEach(item => {
+        item.hits = closuresData ? routeCrossesClosures(item.route, closuresData) : [];
       });
-
-      // one closure can span several features, so group by name
-      const closedByName = new Map(), possibleNames = new Set();
-      for (const h of hits) {
-        if (h.info.kind === 'closed') {
-          closedByName.set(h.info.name, (closedByName.get(h.info.name) || false) || h.info.pastEndDate);
-        } else {
-          possibleNames.add(h.info.name);
-        }
-      }
-      for (const n of closedByName.keys()) possibleNames.delete(n);   // already warned as a closure
-      const parts = [...closedByName].map(([name, lapsed]) =>
-        lapsed ? `${name} ⚑ past listed end date, may be cleared` : name);
-      const maybe = [...possibleNames];
-
-      const stale = (Date.now() - new Date(generatedAt)) > 6 * 3600e3;
-      const km = (route.properties.summary.distance / 1000).toFixed(1);
-      const maybeText = `${maybe.length} lane restriction${maybe.length > 1 ? 's' : ''} ` +
-        `(${maybe.join('; ')}) — the street may still be passable`;
-
-      if (parts.length) {
-        banner.textContent = `⚠ ${km} km route crosses ${parts.length} closure${parts.length > 1 ? 's' : ''}: ${parts.join('; ')}` +
-          (maybe.length ? `. It also passes ${maybeText}` : '');
-      } else if (maybe.length) {
-        banner.textContent = `Heads up: your ${km} km route may be affected by ${maybeText}.`;
-      } else {
-        banner.textContent = `No known closures on this ${km} km route` + (stale ? ' (closure data may be stale)' : '');
-      }
-      // ===== NEW BLOCK ENDS HERE =====
+      if (!routeOptions.length) throw new Error('The routing service returned no alternatives.');
+      selectedRouteOption = routeOptions[0].option;
+      renderRouteCards();
+      updateRouteSource();
+      weatherSummary.textContent = '';
+      await refreshWeatherAndScores();
+      clearInterval(weatherRefreshTimer);
+      weatherRefreshTimer = setInterval(refreshWeatherAndScores, CyclingApp.WEATHER_REFRESH_MS);
 
     } catch (err) {
       console.error('Routing error:', err);
-      banner.textContent = `Couldn't get a route (${err.message}). Try again.`;
+      if (requestVersion !== routeRequestVersion) return;
+      routeMessage = `Could not get a route (${err.message}). Try again.`;
+      banner.textContent = routeMessage;
     }
   });
-  // } catch (err) {
-  // console.error('Routing init failed; map still works', err);
-  // }
 
 });
 </script>

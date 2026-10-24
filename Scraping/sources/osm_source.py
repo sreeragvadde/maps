@@ -200,7 +200,16 @@ def load_osm_features(geojson_path: str) -> list[dict]:
                     facility_type=_facility_type_from_tags(props),
                     bicycle_access=_bicycle_access_from_tags(props),
                     status="open",
-                    extra_properties={"osm_name": props.get("name")},
+                    extra_properties={
+                        "osm_name": props.get("name"),
+                        "highway": props.get("highway"),
+                        "surface": props.get("surface"),
+                        "cycleway": props.get("cycleway"),
+                        "cycleway_left": props.get("cycleway:left"),
+                        "cycleway_right": props.get("cycleway:right"),
+                        "incline": props.get("incline"),
+                        "ele": props.get("ele"),
+                    },
                 )
             )
         except (KeyError, ValueError):

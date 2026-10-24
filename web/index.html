@@ -639,7 +639,7 @@ const BUILDING_LAYER = 'building-3d';
 function set3D(on) {
   try {
     map.setTerrain(on ? { source: 'dem', exaggeration: 1.5 } : null);
-    map.easeTo({ pitch: on ? 65 : 0, duration: 800 });
+    map.once('idle', () => map.easeTo({ pitch: on ? 65 : 0, duration: 800 }));
     is3D = on;
   } catch (e) { console.error('3D toggle failed', e); }
 
@@ -662,7 +662,7 @@ function set3D(on) {
 const WALL_SOURCE = 'closure-walls';
 const WALL_LAYER = 'closure-walls-3d';
 const WALL_BUFFER_M = 6;          // narrower than CLOSURE_BUFFER_M (15) so it reads as a wall, not a slab
-const WALL_HEIGHT_CURRENT = 25;   // metres
+const WALL_HEIGHT_CURRENT = 50;   // metres
 const WALL_HEIGHT_FUTURE = 10;
 
 // Full closures only (status 'closed'), current or future. PAST, detour and reduced are skipped.
@@ -742,15 +742,15 @@ function init3D(map) {
       id: 'satellite', type: 'raster', source: 'satellite',
       layout: { visibility: 'none' }
     });
-    map.setSky({
-      'sky-color': '#7ab8f5',
-      'horizon-color': '#dcebf7',
-      'fog-color': '#e8eef4',
-      'sky-horizon-blend': 0.5,
-      'horizon-fog-blend': 0.5,
-      'fog-ground-blend': 0.3,
-      'atmosphere-blend': 0.8
-    });
+    // map.setSky({
+    //   'sky-color': '#7ab8f5',
+    //   'horizon-color': '#dcebf7',
+    //   'fog-color': '#e8eef4',
+    //   'sky-horizon-blend': 0.5,
+    //   'horizon-fog-blend': 0.5,
+    //   'fog-ground-blend': 0.3,
+    //   'atmosphere-blend': 0.8
+    // });
   } catch (e) { console.error('3D init failed', e); }
 
   // Buildings: hidden until 3D mode, and moved above the satellite layer

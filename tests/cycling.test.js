@@ -136,7 +136,7 @@ test('weather requests are cached and share in-flight requests', async () => {
   assert.equal(requests, 1);
 });
 
-test('only explicitly confirmed car-replacing rides earn points', () => {
+test('every completed ride earns points without asking for a travel alternative', () => {
   const values = new Map();
   const storage = {
     getItem: key => values.get(key) || null,
@@ -144,23 +144,60 @@ test('only explicitly confirmed car-replacing rides earn points', () => {
   };
   const store = CyclingApp.createTripStore(storage);
   const ordinary = store.addRide({
-    distanceKm: 5, mode: 'car', carReplacement: false,
+    distanceKm: 5,
   }).ride;
-  const confirmed = store.addRide({
-    distanceKm: 2.5, mode: 'car', carReplacement: true,
+  const shorter = store.addRide({
+    distanceKm: 2.5,
   }).ride;
-  const nonCarBaseline = store.addRide({
-    distanceKm: 4, mode: 'transit', carReplacement: true,
+  const noAlternative = store.addRide({
+    distanceKm: 4,
   }).ride;
-  assert.equal(ordinary.points, 0);
-  assert.equal(confirmed.points, 25);
-  assert.equal(confirmed.co2Kg, 0.48);
-  assert.equal(nonCarBaseline.points, 0);
+  assert.equal(ordinary.points, 50);
+  assert.equal(shorter.points, 25);
+  assert.equal(noAlternative.points, 40);
+  assert.equal(ordinary.co2Kg, null);
+  assert.equal(ordinary.mode, undefined);
   assert.deepEqual(CyclingApp.summarizeRides(store.load().rides), {
     rideCount: 3,
     distanceKm: 11.5,
-    co2Kg: 1.8,
-    points: 25,
-    carReplacements: 1,
+    co2Kg: 0,
+    points: 115,
   });
+});
+
+test('completed ride history persists route geometry and loads older rides without routes', () => {
+  const values = new Map([['revitalizeCycling.v1', JSON.stringify({
+    rides: [{ id: 'older-ride', distanceKm: 3, points: 0, co2Kg: 0, mode: 'other' }],
+  })]]);
+  const storage = {
+    getItem: key => values.get(key) || null,
+    setItem: (key, value) => values.set(key, value),
+  };
+  const store = CyclingApp.createTripStore(storage);
+  const geometry = {
+    type: 'LineString',
+    coordinates: [[-114.0719, 51.0447], [-114.06, 51.05]],
+  };
+  const result = store.addRide({
+    distanceKm: 2.1,
+    route: { type: 'Feature', geometry },
+  });
+  const restored = CyclingApp.createTripStore(storage).load();
+  assert.equal(restored.rides.length, 2);
+  assert.equal(restored.rides[0].id, result.ride.id);
+  assert.deepEqual(restored.rides[0].route, geometry);
+  assert.equal(restored.rides[0].points, 21);
+  assert.equal(restored.rides[0].co2Kg, null);
+  assert.equal(restored.rides[1].route, undefined);
+});
+
+test('trip store rejects unsupported saved route geometries', () => {
+  const store = CyclingApp.createTripStore({
+    getItem: () => null,
+    setItem: () => {},
+  });
+  assert.throws(() => store.addRide({
+    distanceKm: 1,
+    route: { type: 'Feature', geometry: { type: 'Point', coordinates: [-114, 51] } },
+  }), /must be a line/);
 });

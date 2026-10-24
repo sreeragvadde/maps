@@ -8,14 +8,6 @@
   const CELL_SIZE = 0.01;
   const EARTH_RADIUS_M = 6371008.8;
   const DISTANCE_TARGET_M = 5000;
-  const CAR_EMISSIONS_KG_PER_KM = 0.192;
-  const EMISSIONS_FACTORS = {
-    car: CAR_EMISSIONS_KG_PER_KM,
-    rideshare: CAR_EMISSIONS_KG_PER_KM / 2,
-    transit: 0.089,
-    other: 0,
-  };
-
   const weatherCache = new Map();
   const weatherRequests = new Map();
 
@@ -406,17 +398,27 @@
         return { ...state, storageAvailable: false, storageError: error };
       }
     }
-    function addRide({ distanceKm, mode, carReplacement, routeName = 'Cycling trip', date = new Date().toISOString() }) {
+    function addRide({
+      distanceKm, routeName = 'Cycling trip', route = null,
+      date = new Date().toISOString(),
+    }) {
       if (!Number.isFinite(distanceKm) || distanceKm <= 0) throw new Error('Ride distance must be positive.');
-      if (!Object.hasOwn(EMISSIONS_FACTORS, mode)) throw new Error('Choose a supported alternative travel mode.');
-      const replacedCar = carReplacement && (mode === 'car' || mode === 'rideshare');
+      if (route && !['LineString', 'MultiLineString'].includes(route.geometry?.type))
+        throw new Error('Saved route geometry must be a line.');
+      if (route && !Array.isArray(route.geometry.coordinates))
+        throw new Error('Saved route coordinates are missing.');
       const ride = {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        date, distanceKm: Math.round(distanceKm * 10) / 10, mode,
-        carReplacement: Boolean(replacedCar),
-        points: replacedCar ? Math.round(distanceKm * 10) : 0,
-        co2Kg: Math.round(distanceKm * EMISSIONS_FACTORS[mode] * 100) / 100,
+        date, distanceKm: Math.round(distanceKm * 10) / 10,
+        points: Math.round(distanceKm * 10),
+        co2Kg: null,
         routeName,
+        ...(route ? {
+          route: {
+            type: route.geometry.type,
+            coordinates: route.geometry.coordinates,
+          },
+        } : {}),
       };
       const state = load();
       state.rides.unshift(ride);
@@ -429,14 +431,14 @@
     return {
       rideCount: rides.length,
       distanceKm: rides.reduce((sum, ride) => sum + ride.distanceKm, 0),
-      co2Kg: Math.round(rides.reduce((sum, ride) => sum + ride.co2Kg, 0) * 100) / 100,
+      co2Kg: Math.round(rides.reduce((sum, ride) =>
+        sum + (Number.isFinite(ride.co2Kg) ? ride.co2Kg : 0), 0) * 100) / 100,
       points: rides.reduce((sum, ride) => sum + ride.points, 0),
-      carReplacements: rides.filter(ride => ride.carReplacement).length,
     };
   }
 
   const api = {
-    CAR_EMISSIONS_KG_PER_KM, DISTANCE_TARGET_M, EMISSIONS_FACTORS, WEATHER_REFRESH_MS,
+    DISTANCE_TARGET_M, WEATHER_REFRESH_MS,
     buildNetworkIndex, scoreRoutes, fetchWeather, createTripStore, summarizeRides,
   };
   root.CyclingApp = api;

@@ -984,7 +984,7 @@ map.on('load', async () => {
       title.className = 'route-card-title';
       title.textContent = item.route.properties?.routing_profile === 'cycling-road'
         ? `Road-focused option ${item.rank}`
-        : item.rank === 1 ? 'Best-scoring option' : `Option ${item.rank}`;
+        : item.rank === 1 ? 'Recommended option' : `Option ${item.rank}`;
       const badge = document.createElement('span');
       badge.className = 'score-badge';
       badge.style.backgroundColor = routeColors[item.option] || '#475569';
@@ -1062,11 +1062,7 @@ map.on('load', async () => {
     try {
       const weather = await CyclingApp.fetchWeather(pts[0][1], pts[0][0], departureMs);
       if (version !== weatherRequestVersion) return;
-      routeOptions = CyclingApp.scoreRoutes(
-        routeGeometriesInOptionOrder(), networkIndex, weather, departureMs);
-      routeOptions.forEach(item => {
-        item.hits = closuresData ? routeCrossesClosures(item.route, closuresData) : [];
-      });
+      routeOptions = scoreAndRank(routeGeometriesInOptionOrder(), weather, departureMs);
       const selectedWeather = routeOptions.find(item => item.option === selectedRouteOption)?.weather;
       renderWeather(selectedWeather || null,
         selectedWeather ? null : 'No forecast is available for the selected departure time');
@@ -1075,11 +1071,7 @@ map.on('load', async () => {
     } catch (error) {
       if (version !== weatherRequestVersion) return;
       console.error('Weather request failed:', error);
-      routeOptions = CyclingApp.scoreRoutes(
-        routeGeometriesInOptionOrder(), networkIndex, null, departureMs);
-      routeOptions.forEach(item => {
-        item.hits = closuresData ? routeCrossesClosures(item.route, closuresData) : [];
-      });
+      routeOptions = scoreAndRank(routeGeometriesInOptionOrder(), null, departureMs);
       renderWeather(null, error.message);
       renderRouteCards();
       updateRouteSource();
@@ -1089,6 +1081,20 @@ map.on('load', async () => {
   function routeGeometriesInOptionOrder() {
     return routeOptions.slice().sort((a, b) => a.option - b.option)
       .map(item => item.route);
+  }
+
+  // Score, apply the closure-avoidance preference order, and attach closure hits.
+  function scoreAndRank(routes, weather, departureMs) {
+    let scored = CyclingApp.scoreRoutes(routes, networkIndex, weather, departureMs);
+    try {
+      scored = applyPreferenceOrder(scored, networkIndex);
+    } catch (e) {
+      console.error('Preference ranking failed; keeping score order', e);
+    }
+    scored.forEach(item => {
+      item.hits = closuresData ? routeCrossesClosures(item.route, closuresData) : [];
+    });
+    return scored;
   }
 
   function resetRoute() {
@@ -1203,16 +1209,20 @@ map.on('load', async () => {
     routeMessage = 'Finding cycling route alternatives…';
     banner.textContent = routeMessage;
     try {
-      const routes = await fetchPlainRoutes(pts[0], pts[1]);
-      if (requestVersion !== routeRequestVersion) return;
-      routeMessage = closuresData
-        ? ''
-        : 'Closure data is unavailable; route options cannot be checked against known closures.';
-      routeOptions = CyclingApp.scoreRoutes(
-        routes, networkIndex, null, parseCalgaryDateTime(document.getElementById('departure-time').value));
-      routeOptions.forEach(item => {
-        item.hits = closuresData ? routeCrossesClosures(item.route, closuresData) : [];
-      });
+      let routes;
+      if (closuresData) {
+        const result = await planSafeRoutes(pts[0], pts[1], closuresData);
+        if (requestVersion !== routeRequestVersion) return;
+        routes = result.routes.slice(0, 3);   // routeColors has 3 entries
+        routeMessage = safeRouteMessage(result);
+      } else {
+        // closures unavailable: plain routes, clearly labelled as unchecked
+        routes = await fetchPlainRoutes(pts[0], pts[1]);
+        if (requestVersion !== routeRequestVersion) return;
+        routeMessage = 'Closure data is unavailable; route options cannot be checked against known closures.';
+      }
+      routeOptions = scoreAndRank(
+        routes, null, parseCalgaryDateTime(document.getElementById('departure-time').value));
       if (!routeOptions.length) throw new Error('The routing service returned no alternatives.');
       selectedRouteOption = routeOptions[0].option;
       renderRouteCards();

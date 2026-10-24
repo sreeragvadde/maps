@@ -93,3 +93,4 @@ async function fetchPlainRoutes(start, end) {   // [lng, lat] each
   if (!fc.features?.length) throw new Error('No route found');
   return fc.features.slice(0, 3);
 }
+

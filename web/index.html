@@ -192,6 +192,7 @@ const map = new maplibregl.Map({
   style: 'https://tiles.openfreemap.org/styles/liberty',
   center: CITY.center,
   zoom: CITY.zoom,
+  maxPitch: 80,
   attributionControl: {
     compact: true,
     customAttribution:
@@ -200,12 +201,32 @@ const map = new maplibregl.Map({
   }
 });
 
-map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
+map.addControl(new maplibregl.NavigationControl({ showCompass: true, visualizePitch: true }), 'top-right');
 map.addControl(new maplibregl.GeolocateControl({
   positionOptions: { enableHighAccuracy: true },
   trackUserLocation: true,
   showUserLocation: true
 }), 'top-right');
+class Toggle3D { // button for 3D
+  onAdd() {
+    this.el = document.createElement('div');
+    this.el.className = 'maplibregl-ctrl maplibregl-ctrl-group';
+    const mk = (label, fn) => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.textContent = label; b.onclick = fn;
+      this.el.appendChild(b); return b;
+    };
+    mk('3D', () => set3D(!is3D));
+    let sat = false;
+    mk('🛰', () => {
+      sat = !sat;
+      map.setLayoutProperty('satellite', 'visibility', sat ? 'visible' : 'none');
+    });
+    return this.el;
+  }
+  onRemove() { this.el.remove(); }
+}
+map.addControl(new Toggle3D(), 'top-right');
 
 // Collapsible panel; start collapsed on small screens so the map is visible.
 const panel = document.getElementById('panel');
@@ -325,8 +346,43 @@ let planMode = false, pts = [], markers = [];
 let closuresData = null;   // set once closures load
 let generatedAt = null;    // the `generated` timestamp
 
+let is3D = false;
+function set3D(on) {
+  try {
+    map.setTerrain(on ? { source: 'dem', exaggeration: 1.5 } : null);
+    map.easeTo({ pitch: on ? 65 : 0, duration: 800 });
+    is3D = on;
+  } catch (e) { console.error('3D toggle failed', e); }
+}
+
+function init3D(map) {
+  try {
+    map.addSource('dem', {
+      type: 'raster-dem',
+      tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'],
+      encoding: 'terrarium',
+      tileSize: 256,
+      maxzoom: 15,
+      attribution: 'Terrain: Mapzen / AWS Terrain Tiles'
+    });
+    map.addSource('satellite', {
+      type: 'raster',
+      tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+      tileSize: 256,
+      maxzoom: 19,
+      attribution: 'Imagery © Esri, Maxar, Earthstar Geographics'
+    });
+    map.addLayer({
+      id: 'satellite', type: 'raster', source: 'satellite',
+      layout: { visibility: 'none' }
+    });
+  } catch (e) { console.error('3D init failed', e); }
+}
+
 map.on('load', async () => {
   const loading = document.getElementById('loading');
+  // 0. 3D
+  init3D(map);   // adds DEM + satellite source/layer first
 
   // 1. Closures first: small, and the point of the app
   try {

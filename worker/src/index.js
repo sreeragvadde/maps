@@ -44,6 +44,34 @@ function distinctRoutes(features, limit = 3) {
   }).slice(0, limit);
 }
 
+const MAX_AVOID_POLYGONS = 40;
+const MAX_AVOID_VERTICES = 4000;
+
+function validAvoid(a) {
+  if (a === undefined || a === null) return true;
+  if (a.type !== 'MultiPolygon' || !Array.isArray(a.coordinates)) return false;
+  if (a.coordinates.length === 0 || a.coordinates.length > MAX_AVOID_POLYGONS) return false;
+  let vertices = 0;
+  for (const poly of a.coordinates) {
+    if (!Array.isArray(poly) || poly.length === 0) return false;
+    for (const ring of poly) {
+      if (!Array.isArray(ring) || ring.length < 4) return false;
+      for (const p of ring) {
+        if (!Array.isArray(p) || p.length !== 2 || !p.every(Number.isFinite) || !inCalgary(p)) return false;
+        vertices++;
+      }
+      if (vertices > MAX_AVOID_VERTICES) return false;
+    }
+  }
+  return true;
+}
+
+const orsPost = (url, key, payload) => fetch(url, {
+  method: 'POST',
+  headers: { 'Authorization': key, 'Content-Type': 'application/json' },
+  body: JSON.stringify(payload),
+});
+
 export default {
   async fetch(request, env) {
     const origin = request.headers.get('Origin') || '';
@@ -61,28 +89,33 @@ export default {
     let body;
     try { body = await request.json(); } catch { return err(400, 'Invalid JSON', cors); }
     if (!validCoords(body.coordinates)) return err(400, 'Coordinates must be two [lng, lat] points in Calgary', cors);
+    if (!validAvoid(body.avoid_polygons)) return err(400, 'avoid_polygons must be a Calgary MultiPolygon within size limits', cors);
     if (!env.ORS_KEY) return err(503, 'Route service is not configured. Set the ORS_KEY worker secret.', cors);
 
     // Rate limit: one shared bucket protects the ORS allowance
     const { success } = await env.ROUTE_LIMITER.limit({ key: 'route' });
     if (!success) return err(429, 'Route service is busy. Please try again in a minute.', cors);
 
+    const avoid = body.avoid_polygons || null;
+    const base = {
+      coordinates: body.coordinates,
+      radiuses: [500, 500],
+      extra_info: ['surface', 'waytype', 'steepness'],
+    };
+    if (avoid) base.options = { avoid_polygons: avoid };
+    const alt = n => ({ target_count: n, share_factor: 0.6, weight_factor: 1.4 });
+
     let upstream;
     try {
-      upstream = await fetch(ORS, {
-        method: 'POST',
-        headers: { 'Authorization': env.ORS_KEY, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          coordinates: body.coordinates,
-          radiuses: [500, 500],
-          alternative_routes: { target_count: 3, share_factor: 0.6, weight_factor: 1.4 },
-          extra_info: ['surface', 'waytype', 'steepness'],
-        }),
-      });
+      upstream = await orsPost(ORS, env.ORS_KEY, { ...base, alternative_routes: alt(3) });
+      if (avoid && upstream.status === 400) {
+        // ORS may reject alternatives combined with avoid_polygons: retry for a single route
+        upstream = await orsPost(ORS, env.ORS_KEY, base);
+      }
     } catch (e) {
       console.error('Upstream fetch threw:', String(e));
       return err(502, 'Upstream fetch failed: ' + String(e), cors);
-    }
+    }    
 
     const text = await upstream.text();
     if (!upstream.ok) {
@@ -108,18 +141,9 @@ export default {
       ...feature,
       properties: { ...(feature.properties || {}), routing_profile: 'cycling-regular' },
     })));
-    if (features.length < 2) {
+    if (features.length < 2 && !avoid) {
       try {
-        const fallback = await fetch(ORS_ROAD, {
-          method: 'POST',
-          headers: { 'Authorization': env.ORS_KEY, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            coordinates: body.coordinates,
-            radiuses: [500, 500],
-            alternative_routes: { target_count: 2, share_factor: 0.6, weight_factor: 1.4 },
-            extra_info: ['surface', 'waytype', 'steepness'],
-          }),
-        });
+        const fallback = await orsPost(ORS_ROAD, env.ORS_KEY, { ...base, alternative_routes: alt(2) });
         if (fallback.ok) {
           const fallbackBody = await fallback.json();
           if (Array.isArray(fallbackBody.features)) {
@@ -136,7 +160,7 @@ export default {
       }
     }
 
-    return new Response(JSON.stringify({ ...primary, features }), {
+    return new Response(JSON.stringify({ ...primary, features, avoid_applied: Boolean(avoid) }), {
       status: 200,
       headers: { ...cors, 'Content-Type': 'application/json' },
     });

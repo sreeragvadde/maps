@@ -78,7 +78,7 @@ function routeCrossesClosures(route, closures) {
   return hits;
 }
 
-async function fetchPlainRoute(start, end) {   // [lng, lat] each
+async function fetchPlainRoutes(start, end) {   // [lng, lat] each
   const r = await fetch(PROXY_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -91,5 +91,5 @@ async function fetchPlainRoute(start, end) {   // [lng, lat] each
   }
   const fc = await r.json();
   if (!fc.features?.length) throw new Error('No route found');
-  return fc.features[0];
+  return fc.features.slice(0, 3);
 }

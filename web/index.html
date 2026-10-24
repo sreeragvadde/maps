@@ -610,6 +610,76 @@ function set3D(on) {
       map.setLayoutProperty(BUILDING_LAYER, 'visibility', on ? 'visible' : 'none');
     }
   } catch (e) { console.error('Building toggle failed', e); }
+
+  // Closure walls: own try/catch, same reason as buildings
+  try {
+    if (map.getLayer(WALL_LAYER)) {
+      map.setLayoutProperty(WALL_LAYER, 'visibility', on ? 'visible' : 'none');
+    }
+  } catch (e) { console.error('Wall toggle failed', e); }
+}
+
+// ===== Closure walls (3D barrier walls) =====
+const WALL_SOURCE = 'closure-walls';
+const WALL_LAYER = 'closure-walls-3d';
+const WALL_BUFFER_M = 6;          // narrower than CLOSURE_BUFFER_M (15) so it reads as a wall, not a slab
+const WALL_HEIGHT_CURRENT = 25;   // metres
+const WALL_HEIGHT_FUTURE = 10;
+
+// Full closures only (status 'closed'), current or future. PAST, detour and reduced are skipped.
+function buildWallData(closures) {
+  const out = [];
+  for (const f of closures.features) {
+    try {                                     // one bad geometry must not drop every wall
+      const p = f.properties || {};
+      const info = closureInfo(p);
+      if (info.kind !== 'closed') continue;
+      const t = temporalStatus(p);
+      if (t === 'PAST') continue;
+      const poly = turf.buffer(f, WALL_BUFFER_M / 1000, { units: 'kilometers' });
+      if (!poly || !poly.geometry) continue;
+      const future = t === 'FUTURE';
+      out.push({
+        type: 'Feature',
+        geometry: poly.geometry,
+        properties: {
+          name: info.name,
+          future,
+          lapsed: !future && info.pastEndDate,
+          h: future ? WALL_HEIGHT_FUTURE : WALL_HEIGHT_CURRENT
+        }
+      });
+    } catch (e) { console.warn('wall skipped', e); }
+  }
+  return { type: 'FeatureCollection', features: out };
+}
+
+// Adds the wall source + layer. Call once, after closures have loaded.
+function initClosureWalls() {
+  try {
+    map.addSource(WALL_SOURCE, { type: 'geojson', data: buildWallData(closuresData) });
+    map.addLayer({
+      id: WALL_LAYER, type: 'fill-extrusion', source: WALL_SOURCE,
+      layout: { visibility: is3D ? 'visible' : 'none' },
+      paint: {
+        'fill-extrusion-height': ['get', 'h'],
+        'fill-extrusion-base': 0,
+        'fill-extrusion-opacity': 0.55,
+        'fill-extrusion-color': ['case',
+          ['get', 'lapsed'], '#f59e0b',      // past listed end date: amber
+          ['get', 'future'], '#f4a4b4',      // upcoming: muted pink
+          '#e11d48']                         // closed now: red
+      }
+    });
+  } catch (e) { console.error('Closure walls init failed', e); }
+}
+
+// Rebuild wall data from the current closuresData (after a temporal change)
+function updateWalls() {
+  try {
+    const src = map.getSource(WALL_SOURCE);
+    if (src && closuresData) src.setData(buildWallData(closuresData));
+  } catch (e) { console.error('Wall update failed', e); }
 }
 
 function init3D(map) {
@@ -699,14 +769,18 @@ map.on('load', async () => {
   if (!closuresData.features.some(f => f.properties.status === 'reduced'))
     document.getElementById('row-reduced').style.display = 'none';   // e.g. Calgary
 
-  // Re-evaluate current/upcoming against the clock every minute
+  // Re-evaluate current/upcoming against the clock every minute?
   setInterval(() => {
-    if (refreshTemporal(closuresData)) map.getSource('closures').setData(closuresData);
+    if (refreshTemporal(closuresData)) {
+      map.getSource('closures').setData(closuresData);
+      updateWalls();
+    }
   }, 60000);
 
   wireToggle('t-current', ['closures-current']);
   wireToggle('t-future', ['closures-future']);
   wireToggle('t-detour', ['closures-detour']);
+  initClosureWalls();
   const tNetwork = document.getElementById('t-network');
   const tUnconfirmed = document.getElementById('t-unconfirmed');
 
@@ -783,7 +857,7 @@ map.on('load', async () => {
         paint: { 'line-color': '#7a8ca5', 'line-width': 1.5, 'line-opacity': 0.7 } }, 'closures-current');
       map.addLayer({ id: 'network-unconfirmed', type: 'line', source: 'network',
         filter: ['!=', ['get', 'bicycle_access'], 'designated'],
-        paint: { 'line-color': '#7a8ca5', 'line-width': 1.2, 'line-opacity': 0.4 } }, 'closures-current');
+        paint: { 'line-color': '#7a8ca5', 'line-width': 1, 'line-opacity': 0.2 } }, 'closures-current');
       updateNetworkVis();   // honor checkboxes toggled while loading
     } catch (err) {
       console.error(err);
@@ -796,6 +870,8 @@ map.on('load', async () => {
   // Route alternatives, active closure overlays, and weather-aware scoring.
   map.addSource('route-options', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
   map.addSource('route-hits', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+  map.addLayer({ id: 'route-line', type: 'line', source: 'route',
+    paint: { 'line-color': '#1a73e8', 'line-width': 5.5, 'line-opacity': 0.9 } });
   map.addSource('saved-ride-route', {
     type: 'geojson',
     data: { type: 'FeatureCollection', features: [] },

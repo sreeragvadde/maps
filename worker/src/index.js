@@ -2,6 +2,7 @@ const ALLOWED_ORIGINS = new Set([
   'https://jessikamessika.github.io',
   'http://127.0.0.1:8000',
   'http://localhost:8000',
+  'https://sreeragvadde.github.io'
 ]);
 const ORS = 'https://api.openrouteservice.org/v2/directions/cycling-regular/geojson';
 const ORS_ROAD = 'https://api.openrouteservice.org/v2/directions/cycling-road/geojson';

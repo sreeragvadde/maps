@@ -60,7 +60,31 @@ function bufferedClosures(closures) {
     const st = (feature.properties || {}).status;
     if (!BLOCKING.has(st) && !POSSIBLE.has(st)) continue;
     const buf = turf.buffer(feature, CLOSURE_BUFFER_M / 1000, { units: 'kilometers' });
-    if (buf) items.push({ buf, feature });
+    if (buf) items.push({ buf: carveDetour(buf, feature, closures), feature });
+    // Carve a closure's posted detour out of its buffer so a route that follows the
+    // detour isn't treated as crossing the closure. Scoped per closure by name.
+    const CARVE_DETOURS = {
+      'BOW RIVER PATHWAY - 34 ST NW TO 29 ST NW': { detour: /quarry/i, radiusM: 2 },
+    };
+    function polyDiff(a, b) {
+      try { return turf.difference(turf.featureCollection([a, b])); } catch (_) {} // turf v7 API
+      try { return turf.difference(a, b); } catch (_) {}                          // turf v6 API
+      return a; // fail closed: keep the full buffer
+    }
+    function carveDetour(buf, feature, closures) {
+      const rule = CARVE_DETOURS[closureInfo(feature.properties || {}).name];
+      if (!rule) return buf;
+      let out = buf;
+      for (const d of closures.features) {
+        const p = d.properties || {};
+        if (p.status !== 'detour' || !rule.detour.test(p.detour_note || '')) continue;
+        const hole = turf.buffer(d, rule.radiusM / 1000, { units: 'kilometers', steps: 4 });
+        if (!hole) continue;
+        const next = polyDiff(out, hole);
+        if (next) out = next; // null means everything was erased: keep the previous shape
+      }
+      return out;
+    }
   }
   _cache = { src: closures, items };
   return items;
@@ -118,6 +142,7 @@ function buildAvoidPolygons(closures, start, end, { skipLapsed = false } = {}) {
     let buf = turf.buffer(feature, AVOID_BUFFER_M / 1000, { units: 'kilometers', steps: 4 });
     if (!buf) continue;
     try { buf = turf.simplify(buf, { tolerance: 0.00003, highQuality: false }); } catch (_) {}
+    buf = carveDetour(buf, feature, closures);
     found.push({ buf, d: turf.distance(turf.center(feature), mid) });
   }
   found.sort((a, b) => a.d - b.d);   // nearest the trip first, so truncation drops the far ones

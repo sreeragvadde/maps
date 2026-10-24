@@ -74,6 +74,9 @@ export default {
         body: JSON.stringify({
           coordinates: body.coordinates,
           radiuses: [500, 500],
+          instructions: true,
+          language: 'en',
+          units: 'm',
           alternative_routes: { target_count: 3, share_factor: 0.6, weight_factor: 1.4 },
           extra_info: ['surface', 'waytype', 'steepness'],
         }),
@@ -115,6 +118,9 @@ export default {
           body: JSON.stringify({
             coordinates: body.coordinates,
             radiuses: [500, 500],
+            instructions: true,
+            language: 'en',
+            units: 'm',
             alternative_routes: { target_count: 2, share_factor: 0.6, weight_factor: 1.4 },
             extra_info: ['surface', 'waytype', 'steepness'],
           }),

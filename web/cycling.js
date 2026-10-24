@@ -320,6 +320,68 @@
     };
   }
 
+  function navigationInstructions(route) {
+    const segments = route?.properties?.segments;
+    if (!Array.isArray(segments)) return [];
+    return segments.flatMap(segment => Array.isArray(segment.steps) ? segment.steps : [])
+      .map((step, stepIndex) => ({
+        stepIndex,
+        instruction: typeof step.instruction === 'string' ? step.instruction.trim() : '',
+        startWaypointIndex: Number(step.way_points?.[0]),
+        endWaypointIndex: Number(step.way_points?.[1]),
+      }))
+      .filter(step => step.instruction && Number.isInteger(step.startWaypointIndex) &&
+        Number.isInteger(step.endWaypointIndex) && step.startWaypointIndex >= 0 &&
+        step.endWaypointIndex >= step.startWaypointIndex);
+  }
+
+  function navigationProgress(route, position, previousIndex = 0) {
+    const geometry = route?.geometry;
+    const coordinates = geometry?.type === 'LineString' ? geometry.coordinates
+      : geometry?.type === 'MultiLineString' ? geometry.coordinates.flat() : [];
+    if (!Array.isArray(coordinates) || coordinates.length < 2 ||
+        !Array.isArray(position) || !position.every(Number.isFinite)) return null;
+
+    const cumulative = [0];
+    for (let index = 1; index < coordinates.length; index++)
+      cumulative.push(cumulative[index - 1] + haversine(coordinates[index - 1], coordinates[index]));
+
+    let closestIndex = Math.max(0, Math.min(coordinates.length - 1, previousIndex));
+    let closestDistance = Infinity;
+    const startIndex = Math.max(0, closestIndex - 5);
+    for (let index = startIndex; index < coordinates.length; index++) {
+      const distance = haversine(position, coordinates[index]);
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closestIndex = index;
+      }
+    }
+    const progressMeters = cumulative[closestIndex];
+    const instructions = navigationInstructions(route);
+    let currentStepIndex = instructions.findIndex(step =>
+      step.endWaypointIndex > closestIndex ||
+      (step.startWaypointIndex === step.endWaypointIndex &&
+        step.startWaypointIndex >= closestIndex));
+    if (currentStepIndex < 0 && instructions.length) currentStepIndex = instructions.length - 1;
+    const current = currentStepIndex >= 0 ? instructions[currentStepIndex] : null;
+    const next = currentStepIndex >= 0 ? instructions[currentStepIndex + 1] : null;
+    return {
+      closestIndex,
+      distanceFromRoute: closestDistance,
+      progressMeters,
+      currentInstruction: current ? {
+        ...current,
+        distanceMeters: Math.max(0, cumulative[current.startWaypointIndex] - progressMeters),
+        isArrival: /arriv|destination|finish/i.test(current.instruction),
+      } : null,
+      nextInstruction: next ? {
+        ...next,
+        distanceMeters: Math.max(0,
+          cumulative[Math.min(next.startWaypointIndex, cumulative.length - 1)] - progressMeters),
+      } : null,
+    };
+  }
+
   function snowPriorityCoverage(route, snowPriorityIndex) {
     if (!snowPriorityIndex?.index?.size) return null;
     const samples = sampleRoute(route, 100);
@@ -700,6 +762,8 @@
     DISTANCE_TARGET_M, WEATHER_REFRESH_MS, SNOW_PROGRESS_REFRESH_MS,
     buildNetworkIndex, buildSnowPriorityIndex, buildSnowProgressIndex,
     snowProgressCategory, snowProgressCoverage, snowPriorityCoverage, scoreRoutes,
+    navigationInstructions, navigationProgress,
+    distanceBetween: haversine,
     fetchSnowProgress, fetchWeather, createTripStore, summarizeRides,
   };
   root.CyclingApp = api;

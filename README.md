@@ -12,7 +12,9 @@ python3 -m http.server 8000
 
 Open [http://localhost:8000/](http://localhost:8000/) or [http://localhost:8000/web/](http://localhost:8000/web/). The root page redirects to the map. The deployed route proxy is already configured in `web/routing.js`; local route planning therefore needs network access and an available deployed proxy.
 
-The configured public Worker must be redeployed to receive the route-selection improvements. It first requests up to three `cycling-regular` alternatives and, if that yields fewer than two distinct routes, requests a `cycling-road` alternative as a fallback. Route providers can still decline to produce a distinct second route for a particular trip; the app will not fabricate a path to fill that gap.
+The configured public Worker must be redeployed to receive route-selection and spoken-navigation support. It first requests up to three `cycling-regular` alternatives and, if that yields fewer than two distinct routes, requests a `cycling-road` alternative as a fallback. Both requests include ORS turn instructions. Route providers can still decline to produce a distinct second route for a particular trip; the app will not fabricate a path to fill that gap.
+
+For on-bike guidance, select an option with turn instructions and press **Start navigation**. The browser follows your GPS position, shows the next maneuver, and speaks an advance cue and the turn using its built-in speech synthesis. GPS requires location permission and HTTPS (or localhost); spoken audio depends on browser/device support. If a GPS fix times out or is temporarily unavailable, tracking stays active and **Retry GPS** requests another fix. Voice can be muted, and **Stop** ends location tracking. The map warns if you appear to leave the route, but does not automatically reroute. Use a safe, hands-free audio setup and obey road signs and conditions.
 
 ## APIs and credentials
 

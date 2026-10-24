@@ -119,6 +119,48 @@ test('weather score warns for rain, headwinds, gusts, and extreme temperatures',
   assert.ok(result.weather.headwind > 49);
 });
 
+test('navigation instructions use ORS maneuver waypoints and track forward route progress', () => {
+  const route = {
+    ...makeRoute([
+      [-114.1, 51],
+      [-114.099, 51],
+      [-114.098, 51],
+      [-114.097, 51],
+    ], { distance: 280, duration: 80 }),
+    properties: {
+      segments: [{
+        steps: [
+          { instruction: 'Head east', way_points: [0, 1] },
+          { instruction: 'Turn left onto 10 Avenue', way_points: [1, 3] },
+          { instruction: 'Arrive at your destination', way_points: [3, 3] },
+        ],
+      }],
+    },
+  };
+
+  assert.deepEqual(CyclingApp.navigationInstructions(route), [
+    { stepIndex: 0, instruction: 'Head east', startWaypointIndex: 0, endWaypointIndex: 1 },
+    { stepIndex: 1, instruction: 'Turn left onto 10 Avenue', startWaypointIndex: 1, endWaypointIndex: 3 },
+    { stepIndex: 2, instruction: 'Arrive at your destination', startWaypointIndex: 3, endWaypointIndex: 3 },
+  ]);
+  const start = CyclingApp.navigationProgress(route, [-114.1, 51]);
+  assert.equal(start.currentInstruction.instruction, 'Head east');
+  assert.equal(start.nextInstruction.instruction, 'Turn left onto 10 Avenue');
+  assert.ok(start.nextInstruction.distanceMeters > 60 && start.nextInstruction.distanceMeters < 80);
+
+  const afterFirstManeuver = CyclingApp.navigationProgress(route, [-114.098, 51], 1);
+  assert.equal(afterFirstManeuver.closestIndex, 2);
+  assert.equal(afterFirstManeuver.currentInstruction.instruction, 'Turn left onto 10 Avenue');
+  assert.equal(afterFirstManeuver.nextInstruction.instruction, 'Arrive at your destination');
+  assert.ok(afterFirstManeuver.distanceFromRoute < 1);
+});
+
+test('navigation safely reports unavailable instructions or invalid GPS positions', () => {
+  const route = makeRoute([[-114.1, 51], [-114.09, 51]], { distance: 700 });
+  assert.deepEqual(CyclingApp.navigationInstructions(route), []);
+  assert.equal(CyclingApp.navigationProgress(route, [NaN, 51]), null);
+});
+
 test('winter conditions prefer routes near priority streets without changing universal scores', () => {
   const winterForecast = {
     hourly: {

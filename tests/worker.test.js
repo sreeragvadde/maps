@@ -14,7 +14,10 @@ test('worker requests ORS cycling alternatives with road and surface extras', as
   let outgoing;
   const point = (x, y) => ({
     type: 'Feature',
-    properties: { summary: { distance: 1500, duration: 300 } },
+    properties: {
+      summary: { distance: 1500, duration: 300 },
+      segments: [{ steps: [{ instruction: 'Turn left', way_points: [0, 1] }] }],
+    },
     geometry: { type: 'LineString', coordinates: [[x, y], [x + 0.001, y + 0.001]] },
   });
   globalThis.fetch = async (url, options) => {
@@ -38,10 +41,14 @@ test('worker requests ORS cycling alternatives with road and surface extras', as
     assert.match(outgoing.url, /api\.openrouteservice\.org/);
     const body = JSON.parse(outgoing.options.body);
     assert.equal(body.alternative_routes.target_count, 3);
+    assert.equal(body.instructions, true);
+    assert.equal(body.language, 'en');
+    assert.equal(body.units, 'm');
     assert.deepEqual(body.extra_info, ['surface', 'waytype', 'steepness']);
     const responseBody = await response.json();
     assert.equal(responseBody.features.length, 2);
     assert.equal(responseBody.features[0].properties.routing_profile, 'cycling-regular');
+    assert.equal(responseBody.features[0].properties.segments[0].steps[0].instruction, 'Turn left');
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -52,7 +59,10 @@ test('worker asks cycling-road for a distinct fallback when regular returns one 
   const calls = [];
   const feature = coordinates => ({
     type: 'Feature',
-    properties: { summary: { distance: 1500, duration: 300 } },
+    properties: {
+      summary: { distance: 1500, duration: 300 },
+      segments: [{ steps: [{ instruction: 'Turn right', way_points: [0, 1] }] }],
+    },
     geometry: { type: 'LineString', coordinates },
   });
   globalThis.fetch = async (url, options) => {
@@ -76,6 +86,7 @@ test('worker asks cycling-road for a distinct fallback when regular returns one 
     assert.equal(response.status, 200);
     assert.equal(calls.length, 2);
     assert.match(calls[1].url, /cycling-road/);
+    assert.equal(JSON.parse(calls[1].options.body).instructions, true);
     assert.equal(body.features.length, 2);
     assert.equal(body.features[1].properties.routing_profile, 'cycling-road');
   } finally {

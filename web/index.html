@@ -161,6 +161,12 @@
   #weather-summary.error { background: #fff0ed; color: #7e271b; }
   #weather-summary:empty { display: none; }
   #route-options { display: grid; gap: 8px; margin-top: 10px; }
+  #navigation-controls { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
+  #navigation-status { margin: 5px 0 0; color: #34483b; font-size: 12px; line-height: 1.4; }
+  #navigation-status.error { color: #7e271b; }
+  #navigation-next { margin: 5px 0 0; padding: 9px 10px; border-radius: 9px;
+    background: #eff6f2; color: #173c2c; font-size: 14px; font-weight: 700; line-height: 1.35; }
+  #navigation-next:empty { display: none; }
   .route-card { width: 100%; text-align: left; border: 1px solid #d7e2db; border-radius: 12px; padding: 10px;
     background: #fff; color: #19281f; font: inherit; cursor: pointer; }
   .route-card[aria-pressed="true"] { border: 2px solid #176b48; padding: 9px; background: #f3faf5; }
@@ -312,6 +318,19 @@
          target="_blank" rel="noreferrer">live clearing progress service</a>
     </p>
     <div id="route-options" aria-label="Route alternatives"></div>
+    <div id="navigation-controls" aria-label="Cycling navigation controls">
+      <button id="start-navigation" class="primary-btn" type="button" disabled>Start navigation</button>
+      <button id="retry-navigation" class="secondary-btn" type="button" hidden>Retry GPS</button>
+      <button id="stop-navigation" class="quiet-btn" type="button" disabled>Stop</button>
+      <button id="toggle-voice" class="secondary-btn" type="button" aria-pressed="true">Voice: on</button>
+      <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:#405248">
+        <input id="follow-navigation" type="checkbox" checked> Keep map centered
+      </label>
+    </div>
+    <p id="navigation-next" role="status" aria-live="assertive"></p>
+    <p id="navigation-status" role="status" aria-live="polite">
+      Select a route with directions, then start navigation. GPS and sound require browser permission.
+    </p>
     <p style="margin:7px 0 0;color:#52635a;font-size:10px;line-height:1.4">
       Route scores use the same fixed 100-point benchmark for every trip. In forecast snow/freezing precipitation,
       priority-street coverage can adjust route ordering by up to 5 points without changing the displayed score.
@@ -598,6 +617,12 @@ let networkIndex = null;
 let routeOptions = [];
 let selectedRouteOption = null;
 let userSelectedRouteOption = false;
+let navigationWatchId = null;
+let navigationMarker = null;
+let navigationInstructionPhases = new Map();
+let navigationLastIndex = 0;
+let navigationLastCenter = null;
+let navigationCurrentInstructionIndex = null;
 let weatherRefreshTimer = null;
 let weatherRequestVersion = 0;
 let routeRequestVersion = 0;
@@ -1175,12 +1200,31 @@ map.on('load', async () => {
   const banner = document.getElementById('route-banner');
   const weatherSummary = document.getElementById('weather-summary');
   const routeList = document.getElementById('route-options');
+  const navigationStatus = document.getElementById('navigation-status');
+  const navigationNext = document.getElementById('navigation-next');
+  const startNavigationButton = document.getElementById('start-navigation');
+  const retryNavigationButton = document.getElementById('retry-navigation');
+  const stopNavigationButton = document.getElementById('stop-navigation');
+  const voiceButton = document.getElementById('toggle-voice');
+  const followNavigation = document.getElementById('follow-navigation');
+  let voiceEnabled = true;
   const logRideButton = document.getElementById('open-ride-form');
   const rideForm = document.getElementById('ride-form');
   let routeMessage = 'Choose “Plan a route”, then tap your start and destination on the map.';
 
   function updateRouteSource() {
     const selected = routeOptions.find(item => item.option === selectedRouteOption);
+    const hasInstructions = Boolean(selected &&
+      CyclingApp.navigationInstructions(selected.route).length);
+    startNavigationButton.disabled = !hasInstructions;
+    if (navigationWatchId === null) {
+      navigationStatus.classList.remove('error');
+      navigationStatus.textContent = selected
+        ? hasInstructions
+          ? 'Ready for turn-by-turn navigation. Start to share GPS location and hear spoken directions.'
+          : 'Turn-by-turn directions are unavailable for this route.'
+        : 'Select a route with directions, then start navigation. GPS and sound require browser permission.';
+    }
     map.getSource('route-options').setData({
       type: 'FeatureCollection',
       features: routeOptions.map(item => ({
@@ -1244,6 +1288,190 @@ map.on('load', async () => {
     banner.textContent = `${closureText}${winterText}${liveProgressText}${coverageText} ${routeMessage} Route scores are comparative guidance, not a safety guarantee.`;
   }
 
+  function speakNavigation(text) {
+    if (!voiceEnabled || !('speechSynthesis' in window)) return;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'en-CA';
+    window.speechSynthesis.speak(utterance);
+  }
+
+  function formatNavigationDistance(meters) {
+    if (meters >= 1000) return `${(meters / 1000).toFixed(meters >= 5000 ? 0 : 1)} kilometres`;
+    const rounded = Math.max(0, Math.round(meters / 25) * 25);
+    return `${rounded} metres`;
+  }
+
+  function stopNavigation(message = 'Navigation stopped.', cancelSpeech = true) {
+    if (navigationWatchId !== null && navigator.geolocation)
+      navigator.geolocation.clearWatch(navigationWatchId);
+    navigationWatchId = null;
+    navigationLastIndex = 0;
+    navigationInstructionPhases = new Map();
+    navigationLastCenter = null;
+    navigationCurrentInstructionIndex = null;
+    if (navigationMarker) navigationMarker.remove();
+    navigationMarker = null;
+    if (cancelSpeech && 'speechSynthesis' in window) window.speechSynthesis.cancel();
+    stopNavigationButton.disabled = true;
+    retryNavigationButton.hidden = true;
+    retryNavigationButton.disabled = true;
+    navigationStatus.classList.remove('error');
+    navigationStatus.textContent = message;
+    navigationNext.textContent = '';
+  }
+
+  function handleNavigationPosition(position) {
+    retryNavigationButton.hidden = true;
+    retryNavigationButton.disabled = true;
+    const selected = routeOptions.find(item => item.option === selectedRouteOption);
+    if (!selected) {
+      stopNavigation('Select a route to continue navigation.');
+      return;
+    }
+    const location = [position.coords.longitude, position.coords.latitude];
+    const initialPosition = !navigationMarker;
+    if (!navigationMarker) {
+      navigationMarker = new maplibregl.Marker({ color: '#155eef' })
+        .setLngLat(location).addTo(map);
+      map.easeTo({ center: location, zoom: Math.max(map.getZoom(), 15), duration: 500 });
+    } else {
+      navigationMarker.setLngLat(location);
+      if (followNavigation.checked && (!navigationLastCenter ||
+          CyclingApp.distanceBetween(location, navigationLastCenter) >= 35)) {
+        map.easeTo({ center: location, zoom: Math.max(map.getZoom(), 15), duration: 350 });
+      }
+    }
+    if (!navigationLastCenter ||
+        CyclingApp.distanceBetween(location, navigationLastCenter) >= 35)
+      navigationLastCenter = location;
+
+    const progress = CyclingApp.navigationProgress(selected.route, location, navigationLastIndex);
+    if (!progress) {
+      navigationStatus.classList.add('error');
+      navigationStatus.textContent = 'Turn-by-turn directions are unavailable for this route.';
+      return;
+    }
+    navigationLastIndex = progress.closestIndex;
+    if (progress.distanceFromRoute > 100) {
+      navigationStatus.classList.add('error');
+      navigationStatus.textContent =
+        'You appear to be more than 100 m from the planned route. Follow the map carefully; automatic rerouting is not available.';
+      navigationNext.textContent = '';
+      return;
+    }
+    navigationStatus.classList.remove('error');
+    navigationStatus.textContent =
+      `Navigation active · GPS accuracy ±${Math.round(position.coords.accuracy)} m.`;
+    const current = progress.currentInstruction;
+    if (!current || current.isArrival) {
+      navigationNext.textContent = 'You have reached the end of the route.';
+      speakNavigation('You have reached the end of the route.');
+      stopNavigation('Route complete.', false);
+      return;
+    }
+    if (navigationCurrentInstructionIndex !== current.stepIndex) {
+      const phase = navigationInstructionPhases.get(current.stepIndex) || 0;
+      if (phase < 2) {
+        speakNavigation(initialPosition
+          ? `Navigation started. ${current.instruction}`
+          : current.instruction);
+        navigationInstructionPhases.set(current.stepIndex, 2);
+      }
+      navigationCurrentInstructionIndex = current.stepIndex;
+    }
+
+    navigationNext.textContent = `Now: ${current.instruction}` +
+      (progress.nextInstruction
+        ? ` · Then in ${formatNavigationDistance(progress.nextInstruction.distanceMeters)}: ${progress.nextInstruction.instruction}`
+        : '');
+    const next = progress.nextInstruction;
+    if (!next) return;
+    const phase = navigationInstructionPhases.get(next.stepIndex) || 0;
+    if (next.distanceMeters <= 35 && phase < 2) {
+      speakNavigation(next.instruction);
+      navigationInstructionPhases.set(next.stepIndex, 2);
+    } else if (next.distanceMeters <= 250 && phase < 1) {
+      speakNavigation(`In ${formatNavigationDistance(next.distanceMeters)}, ${next.instruction}`);
+      navigationInstructionPhases.set(next.stepIndex, 1);
+    }
+  }
+
+  function handleNavigationError(error) {
+    if ((error.code === 2 || error.code === 3) && navigationWatchId !== null) {
+      navigationStatus.classList.add('error');
+      navigationStatus.textContent =
+        'GPS location is temporarily unavailable. Keep navigation open; it will continue listening. Check device location/GPS, or retry.';
+      retryNavigationButton.hidden = false;
+      retryNavigationButton.disabled = false;
+      return;
+    }
+    const messages = {
+      1: 'Location permission was denied. Allow location access for this site, then start navigation again.',
+    };
+    stopNavigation(messages[error.code] || `Location error: ${error.message}`);
+    navigationStatus.classList.add('error');
+  }
+
+  function watchNavigationLocation(maximumAge = 10000) {
+    try {
+      navigationWatchId = navigator.geolocation.watchPosition(handleNavigationPosition,
+        handleNavigationError, {
+          enableHighAccuracy: true,
+          maximumAge,
+          timeout: 60000,
+        });
+      stopNavigationButton.disabled = false;
+    } catch (error) {
+      stopNavigation(`Could not start GPS tracking: ${error.message}`);
+      navigationStatus.classList.add('error');
+    }
+  }
+
+  startNavigationButton.addEventListener('click', () => {
+    const selected = routeOptions.find(item => item.option === selectedRouteOption);
+    if (!selected) return;
+    if (!navigator.geolocation) {
+      navigationStatus.classList.add('error');
+      navigationStatus.textContent = 'This browser does not provide GPS location.';
+      return;
+    }
+    const instructions = CyclingApp.navigationInstructions(selected.route);
+    if (!instructions.length) {
+      navigationStatus.classList.add('error');
+      navigationStatus.textContent =
+        'Turn-by-turn directions are unavailable for this route. Try planning it again.';
+      return;
+    }
+    stopNavigation('Requesting your location…');
+    navigationInstructionPhases = new Map();
+    navigationNext.textContent =
+      `Route loaded · ${instructions.length} turn instructions. Waiting for GPS…`;
+    watchNavigationLocation();
+    if (!('speechSynthesis' in window)) {
+      navigationStatus.textContent =
+        'GPS navigation is active; spoken directions are unsupported in this browser.';
+    }
+  });
+  retryNavigationButton.addEventListener('click', () => {
+    if (!navigator.geolocation || navigationWatchId === null) return;
+    navigator.geolocation.clearWatch(navigationWatchId);
+    navigationWatchId = null;
+    retryNavigationButton.disabled = true;
+    retryNavigationButton.hidden = true;
+    navigationStatus.classList.remove('error');
+    navigationStatus.textContent = 'Retrying GPS location…';
+    watchNavigationLocation(0);
+  });
+  stopNavigationButton.addEventListener('click', () => stopNavigation());
+  voiceButton.addEventListener('click', () => {
+    voiceEnabled = !voiceEnabled;
+    voiceButton.textContent = `Voice: ${voiceEnabled ? 'on' : 'off'}`;
+    voiceButton.setAttribute('aria-pressed', String(voiceEnabled));
+    if (!voiceEnabled && 'speechSynthesis' in window) window.speechSynthesis.cancel();
+    if (voiceEnabled && navigationWatchId !== null) speakNavigation('Voice directions on.');
+  });
+
   function renderRouteCards() {
     routeList.replaceChildren();
     routeOptions.forEach(item => {
@@ -1254,6 +1482,8 @@ map.on('load', async () => {
       card.setAttribute('aria-label', `Option ${item.rank}, score ${item.score} out of 100, ` +
         `${(item.distance / 1000).toFixed(1)} kilometres`);
       card.addEventListener('click', () => {
+        if (item.option !== selectedRouteOption && navigationWatchId !== null)
+          stopNavigation('Route changed. Start navigation again when ready.');
         selectedRouteOption = item.option;
         userSelectedRouteOption = true;
         renderRouteCards();
@@ -1397,6 +1627,7 @@ map.on('load', async () => {
   }
 
   function resetRoute() {
+    if (navigationWatchId !== null) stopNavigation('Route cleared.');
     routeRequestVersion++;
     weatherRequestVersion++;
     clearInterval(weatherRefreshTimer);
@@ -1436,6 +1667,7 @@ map.on('load', async () => {
     const ride = (ecoState.rides || []).find(item => item.id === button.dataset.rideId);
     if (!ride?.route?.coordinates?.length) return;
 
+    if (navigationWatchId !== null) stopNavigation('Showing a saved ride; live navigation stopped.');
     routeRequestVersion++;
     weatherRequestVersion++;
     clearInterval(weatherRefreshTimer);

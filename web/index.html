@@ -125,13 +125,21 @@
   .app-card { position: fixed; z-index: 4; box-sizing: border-box; color: #15251e;
     background: rgba(255,255,255,.97); border: 1px solid #d7e2db; border-radius: 16px;
     box-shadow: 0 8px 28px rgba(19,42,30,.16); }
+  .app-card.collapsed .card-body { display: none; }
+  .card-toggle { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    width: 100%; min-height: 48px; padding: 10px 16px; border: 0; border-radius: inherit;
+    background: transparent; color: inherit; text-align: left; font: inherit; cursor: pointer; }
+  .card-toggle:focus-visible { outline: 3px solid #f0a32f; outline-offset: 2px; }
+  .card-toggle .chev { flex: none; transition: transform .15s; }
+  .app-card.collapsed .card-toggle .chev { transform: rotate(180deg); }
+  .card-body { padding: 0 16px 16px; }
   #ride-planner { top: calc(12px + env(safe-area-inset-top)); left: 12px; width: min(390px, calc(100vw - 24px));
-    max-height: min(72vh, 700px); overflow: auto; padding: 16px; }
-  .brand-line { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    max-height: min(72vh, 700px); overflow: auto; padding: 0; }
+  .brand-line { display: flex; flex: 1; align-items: center; justify-content: space-between; gap: 12px; }
   .brand-line h1 { margin: 0; font-size: 18px; line-height: 1.2; }
-  .brand-line p { margin: 4px 0 0; color: #52635a; font-size: 12px; }
+  .brand-subtitle { display: block; margin-top: 4px; color: #52635a; font-size: 12px; font-weight: 400; }
   .planner-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 14px 0 8px; }
-  .planner-heading h2, #eco-dashboard h2 { margin: 0; font-size: 15px; }
+  .planner-heading h2, #eco-dashboard h2, #eco-dashboard strong { margin: 0; font-size: 15px; }
   .primary-btn, .secondary-btn, .quiet-btn { min-height: 40px; border-radius: 10px; padding: 8px 12px;
     font: inherit; font-size: 13px; font-weight: 650; cursor: pointer; }
   .primary-btn { border: 0; background: #176b48; color: #fff; }
@@ -165,7 +173,7 @@
   .route-warning { margin-top: 5px; padding: 6px 8px; border-radius: 7px; color: #653e00; background: #fff0c2;
     font-size: 11px; line-height: 1.35; }
   #eco-dashboard { right: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); width: min(330px, calc(100vw - 24px));
-    max-height: min(55vh, 520px); overflow: auto; padding: 15px; }
+    max-height: min(55vh, 520px); overflow: auto; padding: 0; }
   .eco-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin: 10px 0; }
   .eco-stat { border-radius: 10px; padding: 8px; background: #eff6f2; }
   .eco-stat strong { display: block; font-size: 17px; line-height: 1.2; color: #155a3d; }
@@ -200,9 +208,11 @@
   #loading { left: auto; right: 12px; }
   @media (max-width: 600px) {
     #ride-planner { top: calc(8px + env(safe-area-inset-top)); left: 8px; width: min(360px, calc(100vw - 16px));
-      max-height: 42vh; padding: 12px; }
+      max-height: 42vh; }
     #eco-dashboard { right: 8px; bottom: calc(8px + env(safe-area-inset-bottom)); width: min(320px, calc(100vw - 16px));
-      max-height: 35vh; padding: 12px; }
+      max-height: 35vh; }
+    .card-body { padding: 0 12px 12px; }
+    .card-toggle { padding-right: 12px; padding-left: 12px; }
     #panel { left: auto; right: 8px; top: calc(52vh + 8px); bottom: auto;
       width: min(180px, calc(100vw - 16px)); max-height: 34vh; }
     .eco-stats { gap: 4px; }
@@ -256,54 +266,64 @@
   </div>
 </div>
 <section id="ride-planner" class="app-card" aria-label="Cycling route planner">
-  <div class="brand-line">
-    <div><h1>Revitalize Cycling</h1><p>Plan a better ride through Calgary</p></div>
-    <span aria-hidden="true">🚲</span>
+  <button id="planner-toggle" class="card-toggle" type="button" aria-expanded="true" aria-controls="planner-body">
+    <span class="brand-line">
+      <span><h1>Revitalize Cycling</h1><span class="brand-subtitle">Plan a better ride through Calgary</span></span>
+      <span aria-hidden="true">🚲</span>
+    </span>
+    <span class="chev" aria-hidden="true">▾</span>
+  </button>
+  <div id="planner-body" class="card-body">
+    <p style="margin:0 0 5px;font-size:10px;color:#52635a">
+      Routing by <a href="https://openrouteservice.org/" target="_blank" rel="noreferrer">OpenRouteService</a>
+    </p>
+    <div class="planner-heading"><h2>Route planner</h2>
+      <button id="plan-btn" class="primary-btn" type="button">Plan a route</button>
+    </div>
+    <label class="field-label" for="departure-time">Depart at (Calgary local time)</label>
+    <input id="departure-time" type="datetime-local">
+    <p id="route-banner" role="status" aria-live="polite">Choose “Plan a route”, then tap your start and destination on the map.</p>
+    <div id="weather-summary" role="status" aria-live="polite"></div>
+    <p style="margin:5px 0 0;font-size:10px;color:#52635a">
+      Forecast data by <a href="https://open-meteo.com/" target="_blank" rel="noreferrer">Open-Meteo</a>
+    </p>
+    <div id="route-options" aria-label="Route alternatives"></div>
+    <p style="margin:7px 0 0;color:#52635a;font-size:10px;line-height:1.4">
+      Route scores use the same fixed 100-point benchmark for every trip: mapped road and cycling attributes,
+      weather, a 5 km distance target, and elevation. Missing data earns no points; coverage is shown separately.
+    </p>
   </div>
-  <p style="margin:5px 0 0;font-size:10px;color:#52635a">
-    Routing by <a href="https://openrouteservice.org/" target="_blank" rel="noreferrer">OpenRouteService</a>
-  </p>
-  <div class="planner-heading"><h2>Route planner</h2>
-    <button id="plan-btn" class="primary-btn" type="button">Plan a route</button>
-  </div>
-  <label class="field-label" for="departure-time">Depart at (Calgary local time)</label>
-  <input id="departure-time" type="datetime-local">
-  <p id="route-banner" role="status" aria-live="polite">Choose “Plan a route”, then tap your start and destination on the map.</p>
-  <div id="weather-summary" role="status" aria-live="polite"></div>
-  <p style="margin:5px 0 0;font-size:10px;color:#52635a">
-    Forecast data by <a href="https://open-meteo.com/" target="_blank" rel="noreferrer">Open-Meteo</a>
-  </p>
-  <div id="route-options" aria-label="Route alternatives"></div>
-  <p style="margin:7px 0 0;color:#52635a;font-size:10px;line-height:1.4">
-    Route scores use the same fixed 100-point benchmark for every trip: mapped road and cycling attributes,
-    weather, a 5 km distance target, and elevation. Missing data earns no points; coverage is shown separately.
-  </p>
 </section>
 
 <aside id="eco-dashboard" class="app-card" aria-labelledby="eco-title">
-  <h2 id="eco-title">Your cycling impact</h2>
-  <div class="eco-stats">
-    <div class="eco-stat"><strong id="eco-distance">0</strong><span>km cycled</span></div>
-    <div class="eco-stat"><strong id="eco-co2">0</strong><span>kg CO₂ estimate</span></div>
-    <div class="eco-stat"><strong id="eco-points">0</strong><span>eco points</span></div>
-  </div>
-  <div id="eco-progress" role="progressbar" aria-label="Progress to 100 km cycling goal" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span></span></div>
-  <p id="goal-copy">100 km cycling goal · 0% complete</p>
-  <p id="eco-points-rule" style="margin:0;color:#52635a;font-size:10px">Earn 10 points per km for every completed ride you log.</p>
-  <div id="achievements" aria-label="Achievements"></div>
-  <p id="eco-note" role="status"></p>
-  <button id="open-ride-form" class="secondary-btn" type="button" disabled>Log completed ride</button>
-  <form id="ride-form" hidden>
-    <p style="margin:0;color:#405248;font-size:12px;line-height:1.4">
-      Log this completed ride to earn 10 points per kilometre. No transport alternative is needed.
-    </p>
-    <div class="button-row">
-      <button class="primary-btn" type="submit">Save completed ride</button>
-      <button id="cancel-ride-form" class="quiet-btn" type="button">Cancel</button>
+  <button id="eco-toggle" class="card-toggle" type="button" aria-expanded="true" aria-controls="eco-body">
+    <span><strong id="eco-title">Your cycling impact</strong></span>
+    <span class="chev" aria-hidden="true">▾</span>
+  </button>
+  <div id="eco-body" class="card-body">
+    <div class="eco-stats">
+      <div class="eco-stat"><strong id="eco-distance">0</strong><span>km cycled</span></div>
+      <div class="eco-stat"><strong id="eco-co2">0</strong><span>kg CO₂ estimate</span></div>
+      <div class="eco-stat"><strong id="eco-points">0</strong><span>eco points</span></div>
     </div>
-  </form>
-  <details id="ride-history"><summary>Ride history (0)</summary><ul id="ride-list"></ul></details>
-  <p class="disclaimer">CO₂ totals include only rides with an explicitly recorded alternative mode; new rides do not claim avoided emissions because no alternative is collected. Cycling does not guarantee a safe route; forecasts and mapped road tags can be incomplete.</p>
+    <div id="eco-progress" role="progressbar" aria-label="Progress to 100 km cycling goal" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span></span></div>
+    <p id="goal-copy">100 km cycling goal · 0% complete</p>
+    <p id="eco-points-rule" style="margin:0;color:#52635a;font-size:10px">Earn 10 points per km for every completed ride you log.</p>
+    <div id="achievements" aria-label="Achievements"></div>
+    <p id="eco-note" role="status"></p>
+    <button id="open-ride-form" class="secondary-btn" type="button" disabled>Log completed ride</button>
+    <form id="ride-form" hidden>
+      <p style="margin:0;color:#405248;font-size:12px;line-height:1.4">
+        Log this completed ride to earn 10 points per kilometre. No transport alternative is needed.
+      </p>
+      <div class="button-row">
+        <button class="primary-btn" type="submit">Save completed ride</button>
+        <button id="cancel-ride-form" class="quiet-btn" type="button">Cancel</button>
+      </div>
+    </form>
+    <details id="ride-history"><summary>Ride history (0)</summary><ul id="ride-list"></ul></details>
+    <p class="disclaimer">CO₂ totals include only rides with an explicitly recorded alternative mode; new rides do not claim avoided emissions because no alternative is collected. Cycling does not guarantee a safe route; forecasts and mapped road tags can be incomplete.</p>
+  </div>
 </aside>
 <script>
 
@@ -313,6 +333,36 @@ const CITY = {
   attribution: 'City of Calgary Open Data (Open Government Licence - Calgary)'
 };
 document.title = 'Revitalize Cycling | ' + CITY.name;
+
+// Keep the map panels usable even when WebGL is unavailable.
+const panel = document.getElementById('panel');
+const panelToggle = document.getElementById('panel-toggle');
+function setCollapsed(c) {
+  panel.classList.toggle('collapsed', c);
+  panelToggle.setAttribute('aria-expanded', String(!c));
+}
+panelToggle.addEventListener('click', () =>
+  setCollapsed(!panel.classList.contains('collapsed')));
+
+function wireCardToggle(cardId, toggleId) {
+  const card = document.getElementById(cardId);
+  const toggle = document.getElementById(toggleId);
+  toggle.addEventListener('click', () => {
+    const expanded = toggle.getAttribute('aria-expanded') === 'true';
+    card.classList.toggle('collapsed', expanded);
+    toggle.setAttribute('aria-expanded', String(!expanded));
+  });
+}
+
+wireCardToggle('ride-planner', 'planner-toggle');
+wireCardToggle('eco-dashboard', 'eco-toggle');
+if (window.matchMedia('(max-width: 600px)').matches) {
+  setCollapsed(true);
+  document.getElementById('ride-planner').classList.add('collapsed');
+  document.getElementById('planner-toggle').setAttribute('aria-expanded', 'false');
+  document.getElementById('eco-dashboard').classList.add('collapsed');
+  document.getElementById('eco-toggle').setAttribute('aria-expanded', 'false');
+}
 
 const map = new maplibregl.Map({
   container: 'map',
@@ -333,17 +383,6 @@ map.addControl(new maplibregl.GeolocateControl({
   trackUserLocation: true,
   showUserLocation: true
 }), 'top-right');
-
-// Collapsible panel; start collapsed on small screens so the map is visible.
-const panel = document.getElementById('panel');
-const panelToggle = document.getElementById('panel-toggle');
-function setCollapsed(c) {
-  panel.classList.toggle('collapsed', c);
-  panelToggle.setAttribute('aria-expanded', String(!c));
-}
-panelToggle.addEventListener('click', () =>
-  setCollapsed(!panel.classList.contains('collapsed')));
-if (window.matchMedia('(max-width: 600px)').matches) setCollapsed(true);
 
 // First-visit welcome. localStorage can throw (private mode), so every access is guarded.
 (function () {

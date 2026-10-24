@@ -2,17 +2,31 @@
   'use strict';
 
   const WEATHER_URL = 'https://api.open-meteo.com/v1/forecast';
+  const SNOW_PROGRESS_URL =
+    'https://gis.calgary.ca/arcgis/rest/services/pub_CalgaryDotCa/SnowClearingProgress/MapServer/0/query';
   const WEATHER_CACHE_MS = 15 * 60 * 1000;
   const WEATHER_REFRESH_MS = 30 * 60 * 1000;
+  const SNOW_PROGRESS_CACHE_MS = 10 * 60 * 1000;
+  const SNOW_PROGRESS_REFRESH_MS = 15 * 60 * 1000;
+  const SNOW_PROGRESS_PAGE_SIZE = 1000;
   const WEATHER_CACHE_LIMIT = 48;
   const CELL_SIZE = 0.01;
   const EARTH_RADIUS_M = 6371008.8;
   const DISTANCE_TARGET_M = 5000;
+  const SNOW_GRID_DEGREES = 0.00025;
+  const SNOW_ROUTE_TOLERANCE_M = 35;
   const weatherCache = new Map();
   const weatherRequests = new Map();
+  let snowProgressCache = null;
+  let snowProgressCacheAt = 0;
+  let snowProgressRequest = null;
 
   function cellKey(lng, lat) {
     return `${Math.floor(lng / CELL_SIZE)}:${Math.floor(lat / CELL_SIZE)}`;
+  }
+
+  function snowCellKey(lng, lat) {
+    return `${Math.floor(lng / SNOW_GRID_DEGREES)}:${Math.floor(lat / SNOW_GRID_DEGREES)}`;
   }
 
   function eachLine(feature, callback) {
@@ -124,6 +138,220 @@
     return samples;
   }
 
+  function buildSnowPriorityIndex(snowData) {
+    const index = new Map();
+    const seen = new Set();
+    for (const feature of snowData?.features || []) {
+      const priority = Number(feature.properties?.priority);
+      if (priority !== 1 && priority !== 2) continue;
+      eachLine(feature, line => {
+        for (let i = 1; i < line.length; i++) {
+          const start = line[i - 1], end = line[i];
+          const distance = haversine(start, end);
+          const steps = Math.max(1, Math.ceil(distance / 25));
+          for (let step = 0; step <= steps; step++) {
+            const ratio = step / steps;
+            const point = [
+              start[0] + (end[0] - start[0]) * ratio,
+              start[1] + (end[1] - start[1]) * ratio,
+            ];
+            const identity = `${priority}:${point[0].toFixed(5)}:${point[1].toFixed(5)}`;
+            if (seen.has(identity)) continue;
+            seen.add(identity);
+            const key = snowCellKey(point[0], point[1]);
+            if (!index.has(key)) index.set(key, []);
+            index.get(key).push({ point, priority });
+          }
+        }
+      });
+    }
+    return { index, sourceUpdated: snowData?.source_updated || null };
+  }
+
+  function snowProgressCategory(properties = {}) {
+    const priority = Number(properties.PRIORITY);
+    const hoursBack = Number(properties.HOURS_BACK);
+    if (priority === 1) return 'priority-one-completed';
+    if (priority === 2) return 'priority-two-completed';
+    if (priority !== 0) return null;
+    if (hoursBack === 1) return 'last-hour';
+    if (hoursBack === 2) return 'last-two-hours';
+    if ([24, 48, 49].includes(hoursBack)) return 'over-two-hours';
+    return null;
+  }
+
+  async function fetchSnowProgress(fetcher = fetch, forceRefresh = false) {
+    if (!forceRefresh && snowProgressCache &&
+        Date.now() - snowProgressCacheAt < SNOW_PROGRESS_CACHE_MS) return snowProgressCache;
+    if (snowProgressRequest) return snowProgressRequest;
+
+    const request = (async () => {
+      const features = [];
+      const seenIds = new Set();
+      let offset = 0;
+      while (true) {
+        const url = new URL(SNOW_PROGRESS_URL);
+        url.search = new URLSearchParams({
+          where: '1=1',
+          outFields: 'OBJECTID,SEGMENT_ID,STREET_NM,VEHICLE_NM,VEHICLE_TY,SENSORS,DIRECTION,HOURS_BACK,PRIORITY',
+          returnGeometry: 'true',
+          outSR: '4326',
+          resultOffset: String(offset),
+          resultRecordCount: String(SNOW_PROGRESS_PAGE_SIZE),
+          f: 'geojson',
+        });
+        const response = await fetcher(url, { cache: 'no-store' });
+        if (!response.ok) throw new Error(`City snow-progress service HTTP ${response.status}`);
+        const body = await response.json();
+        if (body.error) {
+          throw new Error(`City snow-progress service: ${body.error.message || 'query failed'}`);
+        }
+        if (body.type !== 'FeatureCollection' || !Array.isArray(body.features)) {
+          throw new Error('City snow-progress service returned invalid GeoJSON');
+        }
+        for (const feature of body.features) {
+          const properties = feature.properties || {};
+          const category = snowProgressCategory(properties);
+          if (!category) {
+            throw new Error('City snow-progress service returned an unsupported progress category');
+          }
+          if (!['LineString', 'MultiLineString'].includes(feature.geometry?.type) ||
+              !Array.isArray(feature.geometry.coordinates)) {
+            throw new Error('City snow-progress service returned invalid route geometry');
+          }
+          const id = properties.OBJECTID ?? feature.id;
+          if (id !== undefined && seenIds.has(String(id))) continue;
+          if (id !== undefined) seenIds.add(String(id));
+          features.push({
+            ...feature,
+            properties: { ...properties, snow_progress_category: category },
+          });
+        }
+        if (body.features.length < SNOW_PROGRESS_PAGE_SIZE ||
+            body.exceededTransferLimit === false) break;
+        offset += body.features.length;
+      }
+      const result = {
+        type: 'FeatureCollection',
+        features,
+        fetched_at: new Date().toISOString(),
+      };
+      snowProgressCache = result;
+      snowProgressCacheAt = Date.now();
+      return result;
+    })().finally(() => { snowProgressRequest = null; });
+    snowProgressRequest = request;
+    return request;
+  }
+
+  function buildSnowProgressIndex(progressData) {
+    const index = new Map();
+    let featureCount = 0;
+    for (const feature of progressData?.features || []) {
+      const category = snowProgressCategory(feature.properties);
+      if (!category) continue;
+      featureCount++;
+      eachLine(feature, line => {
+        for (let i = 1; i < line.length; i++) {
+          const start = line[i - 1], end = line[i];
+          const distance = haversine(start, end);
+          const steps = Math.max(1, Math.ceil(distance / 25));
+          for (let step = 0; step <= steps; step++) {
+            const ratio = step / steps;
+            const point = [
+              start[0] + (end[0] - start[0]) * ratio,
+              start[1] + (end[1] - start[1]) * ratio,
+            ];
+            const key = snowCellKey(point[0], point[1]);
+            if (!index.has(key)) index.set(key, []);
+            index.get(key).push({ point, category });
+          }
+        }
+      });
+    }
+    return { index, featureCount, fetchedAt: progressData?.fetched_at || null };
+  }
+
+  function snowProgressCoverage(route, progressIndex) {
+    if (!progressIndex?.index?.size) return null;
+    const samples = sampleRoute(route, 100);
+    if (!samples.length) return null;
+    const counts = {
+      'last-hour': 0,
+      'last-two-hours': 0,
+      'over-two-hours': 0,
+      'priority-one-completed': 0,
+      'priority-two-completed': 0,
+    };
+    for (const point of samples) {
+      const x = Math.floor(point[0] / SNOW_GRID_DEGREES);
+      const y = Math.floor(point[1] / SNOW_GRID_DEGREES);
+      let nearestCategory = null, nearestDistance = SNOW_ROUTE_TOLERANCE_M;
+      for (let dx = -2; dx <= 2; dx++) {
+        for (let dy = -2; dy <= 2; dy++) {
+          for (const candidate of progressIndex.index.get(`${x + dx}:${y + dy}`) || []) {
+            const distance = haversine(point, candidate.point);
+            if (distance < nearestDistance) {
+              nearestDistance = distance;
+              nearestCategory = candidate.category;
+            }
+          }
+        }
+      }
+      if (nearestCategory) counts[nearestCategory]++;
+    }
+    const percent = count => count / samples.length * 100;
+    const lastHourPercent = percent(counts['last-hour']);
+    const lastTwoHoursPercent = percent(counts['last-two-hours']);
+    const overTwoHoursPercent = percent(counts['over-two-hours']);
+    const priorityOnePercent = percent(counts['priority-one-completed']);
+    const priorityTwoPercent = percent(counts['priority-two-completed']);
+    return {
+      sampleCount: samples.length,
+      lastHourPercent,
+      lastTwoHoursPercent,
+      overTwoHoursPercent,
+      priorityOnePercent,
+      priorityTwoPercent,
+      reportedPercent: lastHourPercent + lastTwoHoursPercent + overTwoHoursPercent +
+        priorityOnePercent + priorityTwoPercent,
+      recentFitPercent: lastHourPercent + lastTwoHoursPercent * 0.5,
+      completedFitPercent: (priorityOnePercent + priorityTwoPercent) * 0.5,
+    };
+  }
+
+  function snowPriorityCoverage(route, snowPriorityIndex) {
+    if (!snowPriorityIndex?.index?.size) return null;
+    const samples = sampleRoute(route, 100);
+    if (!samples.length) return null;
+    let priority1 = 0, priority2 = 0, matched = 0;
+    for (const point of samples) {
+      const x = Math.floor(point[0] / SNOW_GRID_DEGREES);
+      const y = Math.floor(point[1] / SNOW_GRID_DEGREES);
+      let nearestPriority = null, nearestDistance = SNOW_ROUTE_TOLERANCE_M;
+      for (let dx = -2; dx <= 2; dx++) {
+        for (let dy = -2; dy <= 2; dy++) {
+          for (const candidate of snowPriorityIndex.index.get(`${x + dx}:${y + dy}`) || []) {
+            const distance = haversine(point, candidate.point);
+            if (distance < nearestDistance) {
+              nearestDistance = distance;
+              nearestPriority = candidate.priority;
+            }
+          }
+        }
+      }
+      if (nearestPriority === 1) priority1++;
+      if (nearestPriority === 2) priority2++;
+      if (nearestPriority !== null) matched++;
+    }
+    return {
+      sampleCount: samples.length,
+      priority1Percent: priority1 / samples.length * 100,
+      priority2Percent: priority2 / samples.length * 100,
+      priorityPercent: matched / samples.length * 100,
+    };
+  }
+
   function mean(values) {
     return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
   }
@@ -230,6 +458,7 @@
     const windSpeed = value('wind_speed_10m');
     const windDirection = value('wind_direction_10m');
     const gusts = value('wind_gusts_10m');
+    const snowfall = value('snowfall');
     const coordinates = route.geometry?.coordinates || [];
     const firstPoint = route.geometry?.type === 'MultiLineString' ? coordinates[0]?.[0] : coordinates[0];
     const secondPoint = route.geometry?.type === 'MultiLineString' ? coordinates[0]?.[1] : coordinates[1];
@@ -265,7 +494,11 @@
       earned += 3 - temperaturePenalty;
     }
     const warnings = [];
+    const winterConditions = Number.isFinite(snowfall) && snowfall >= 0.1 ||
+      Number.isFinite(temperature) && temperature <= 0 &&
+      Number.isFinite(precipitation) && precipitation >= 0.1;
     if (precipitation >= 2) warnings.push('Forecast precipitation may reduce visibility and traction.');
+    if (winterConditions) warnings.push('Forecast snow or subfreezing precipitation may make paths slippery.');
     if (gusts >= 50) warnings.push('Strong gusts are forecast; take extra care in exposed areas.');
     if (windSpeed >= 40) warnings.push('Strong winds are forecast.');
     if (temperature <= -15 || temperature >= 33)
@@ -274,18 +507,21 @@
       score: availableWeight ? Math.max(0, Math.min(25, earned / availableWeight * 25)) : null,
       availableWeight,
       time: weather.hourly.time[selected],
-      temperature, precipitation, windSpeed, windDirection, gusts, headwind,
+      temperature, precipitation, windSpeed, windDirection, gusts, headwind, snowfall,
+      winterConditions,
       warnings,
       label: [
         Number.isFinite(temperature) ? `${Math.round(temperature)}°C` : null,
         Number.isFinite(precipitation) ? `${precipitation.toFixed(1)} mm rain` : null,
         Number.isFinite(windSpeed) ? `${Math.round(windSpeed)} km/h wind` : null,
         Number.isFinite(gusts) ? `${Math.round(gusts)} km/h gusts` : null,
+        Number.isFinite(snowfall) && snowfall > 0 ? `${snowfall.toFixed(1)} cm snow` : null,
       ].filter(Boolean).join(' · '),
     };
   }
 
-  function scoreRoutes(routes, networkIndex, weather, departureMs) {
+  function scoreRoutes(routes, networkIndex, weather, departureMs, snowPriorityIndex = null,
+    snowProgressIndex = null) {
     const prepared = routes.map(route => {
       const distance = routeDistance(route);
       const matched = sampleRoute(route)
@@ -299,6 +535,18 @@
       const infrastructure = mean(infrastructureValues);
       const weatherResult = calculateWeather(weather, departureMs, route);
       const elevation = routeElevation(route, matched);
+      const winterCoverage = weatherResult?.winterConditions
+        ? snowPriorityCoverage(route, snowPriorityIndex)
+        : null;
+      const progressCoverage = weatherResult?.winterConditions
+        ? snowProgressCoverage(route, snowProgressIndex)
+        : null;
+      const hasLiveProgress = (snowProgressIndex?.featureCount || 0) > 0;
+      const progressBonus = progressCoverage?.recentFitPercent > 0
+        ? progressCoverage.recentFitPercent * 0.05
+        : progressCoverage?.completedFitPercent > 0
+          ? progressCoverage.completedFitPercent * 0.05
+          : hasLiveProgress ? 0 : (winterCoverage?.priorityPercent || 0) * 0.05;
       return {
         route, distance,
         duration: route.properties?.summary?.duration ??
@@ -308,6 +556,14 @@
         componentWeights: { safety: 25, infrastructure: 25,
         weather: weatherResult?.availableWeight ?? 0, distance: 15, elevation: 10 },
         weather: weatherResult,
+        winter: weatherResult?.winterConditions ? {
+          conditions: true,
+          coverage: winterCoverage,
+          progress: progressCoverage,
+          liveReports: snowProgressIndex?.featureCount || 0,
+          progressFetchedAt: snowProgressIndex?.fetchedAt || null,
+          rankingBonus: progressBonus,
+        } : null,
         matchedCount: matched.length,
       };
     });
@@ -340,7 +596,10 @@
       if (item.weather) item.explanations.push(...item.weather.warnings);
       else item.explanations.push('No forecast is available for the selected departure time.');
       return item;
-    }).sort((a, b) => b.score - a.score || a.distance - b.distance)
+    }).sort((a, b) =>
+      (b.score + (b.winter?.rankingBonus || 0)) -
+        (a.score + (a.winter?.rankingBonus || 0)) ||
+      b.score - a.score || a.distance - b.distance)
       .map((item, index) => ({ ...item, rank: index + 1 }));
   }
 
@@ -361,7 +620,7 @@
       url.search = new URLSearchParams({
         latitude: latitude.toFixed(2),
         longitude: longitude.toFixed(2),
-        hourly: 'temperature_2m,precipitation,wind_speed_10m,wind_direction_10m,wind_gusts_10m',
+        hourly: 'temperature_2m,precipitation,snowfall,wind_speed_10m,wind_direction_10m,wind_gusts_10m',
         forecast_days: '3',
         timezone: 'UTC',
       });
@@ -438,8 +697,10 @@
   }
 
   const api = {
-    DISTANCE_TARGET_M, WEATHER_REFRESH_MS,
-    buildNetworkIndex, scoreRoutes, fetchWeather, createTripStore, summarizeRides,
+    DISTANCE_TARGET_M, WEATHER_REFRESH_MS, SNOW_PROGRESS_REFRESH_MS,
+    buildNetworkIndex, buildSnowPriorityIndex, buildSnowProgressIndex,
+    snowProgressCategory, snowProgressCoverage, snowPriorityCoverage, scoreRoutes,
+    fetchSnowProgress, fetchWeather, createTripStore, summarizeRides,
   };
   root.CyclingApp = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

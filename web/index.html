@@ -153,6 +153,8 @@
     border: 1px solid #aebfb3; border-radius: 9px; color: #15251e; background: #fff; font: inherit; }
   #route-banner { margin: 8px 0 0; color: #34483b; font-size: 12px; line-height: 1.4; }
   #route-banner:empty { display: none; }
+  #snow-data-status { margin: 5px 0 0; color: #52635a; font-size: 10px; line-height: 1.4; }
+  #snow-data-status.warning { color: #7e271b; }
   #weather-summary { margin-top: 10px; padding: 9px 10px; border-radius: 10px; background: #eff6f2;
     color: #254835; font-size: 12px; line-height: 1.4; }
   #weather-summary.warning { background: #fff4d8; color: #653e00; }
@@ -260,6 +262,21 @@
       <input type="checkbox" id="t-reduced" checked>
       <span class="swatch" style="background:#f59e0b"></span> Lanes reduced (may be passable)
     </label>
+    <label class="row" id="row-snow-priority">
+      <input type="checkbox" id="t-snow-priority" checked>
+      <span class="swatch" style="background:#7c3aed"></span> Snow priority streets (not live clearing)
+    </label>
+    <label class="row" id="row-snow-progress">
+      <input type="checkbox" id="t-snow-progress" checked>
+      <span class="swatch" style="background:#16a34a"></span> Live City snow-clearing progress
+    </label>
+    <div class="row" aria-label="Live snow progress map colors" style="font-size:10px;padding-left:22px">
+      <span style="color:#16a34a">●</span> Last hour&nbsp;
+      <span style="color:#f59e0b">●</span> Last 2 hours&nbsp;
+      <span style="color:#64748b">●</span> Over 2 hours&nbsp;
+      <span style="color:#7c3aed">●</span> Priority 1 done&nbsp;
+      <span style="color:#0891b2">●</span> Priority 2 done
+    </div>
     <label class="row">
       <input type="checkbox" id="t-detour" checked>
       <span class="swatch" style="background:radial-gradient(circle at 2px 2px,#7c3aed 1.8px,transparent 2.2px) 0 0/6px 4px repeat-x"></span> Detour    </label>
@@ -287,10 +304,18 @@
     <p style="margin:5px 0 0;font-size:10px;color:#52635a">
       Forecast data by <a href="https://open-meteo.com/" target="_blank" rel="noreferrer">Open-Meteo</a>
     </p>
+    <p id="snow-data-status" role="status" aria-live="polite">Loading City snow-priority routes…</p>
+    <p style="margin:0;font-size:10px;color:#52635a">
+      <a href="https://data.calgary.ca/Health-and-Safety/Snow-and-Ice-Clearing-Priority-Routes/4v8s-3kss/about_data"
+         target="_blank" rel="noreferrer">City snow-priority map</a> ·
+      <a href="https://gis.calgary.ca/arcgis/rest/services/pub_CalgaryDotCa/SnowClearingProgress/MapServer"
+         target="_blank" rel="noreferrer">live clearing progress service</a>
+    </p>
     <div id="route-options" aria-label="Route alternatives"></div>
     <p style="margin:7px 0 0;color:#52635a;font-size:10px;line-height:1.4">
-      Route scores use the same fixed 100-point benchmark for every trip: mapped road and cycling attributes,
-      weather, a 5 km distance target, and elevation. Missing data earns no points; coverage is shown separately.
+      Route scores use the same fixed 100-point benchmark for every trip. In forecast snow/freezing precipitation,
+      priority-street coverage can adjust route ordering by up to 5 points without changing the displayed score.
+      Missing data is not guessed.
     </p>
   </div>
 </section>
@@ -461,6 +486,52 @@ function buildClosurePopup(props) {
   return root;
 }
 
+function buildSnowPriorityPopup(props) {
+  const priority = Number(props.priority);
+  const root = document.createElement('div');
+  const heading = document.createElement('strong');
+  heading.textContent = `City snow-clearing Priority ${priority} street`;
+  root.appendChild(heading);
+  root.appendChild(document.createElement('br'));
+  root.appendChild(document.createTextNode(priority === 1
+    ? 'Service commitment: cleared within 18 hours after snowfall ends.'
+    : 'Service commitment: cleared within 36 hours after snowfall ends.'));
+  root.appendChild(document.createElement('br'));
+  const note = document.createElement('em');
+  note.textContent = 'Priority designation only; this map does not report live plow activity.';
+  root.appendChild(note);
+  return root;
+}
+
+function buildSnowProgressPopup(props) {
+  const root = document.createElement('div');
+  const heading = document.createElement('strong');
+  const category = CyclingApp.snowProgressCategory(props);
+  const labels = {
+    'last-hour': 'Plowed, sanded/salted in the last hour',
+    'last-two-hours': 'Plowed, sanded/salted in the last 2 hours',
+    'over-two-hours': 'Plowed, sanded/salted over 2 hours ago',
+    'priority-one-completed': 'Priority 1 routes completed',
+    'priority-two-completed': 'Priority 2 routes completed',
+  };
+  heading.textContent = labels[category] || 'City snow-clearing progress';
+  root.appendChild(heading);
+  const details = [
+    props.STREET_NM ? `Street: ${props.STREET_NM}` : null,
+    props.VEHICLE_NM ? `Vehicle: ${props.VEHICLE_NM}` : null,
+    props.VEHICLE_TY ? `Vehicle type: ${props.VEHICLE_TY}` : null,
+  ].filter(Boolean);
+  if (details.length) {
+    root.appendChild(document.createElement('br'));
+    root.appendChild(document.createTextNode(details.join(' · ')));
+  }
+  root.appendChild(document.createElement('br'));
+  const note = document.createElement('em');
+  note.textContent = 'City progress report; data may lag actual conditions and does not guarantee the path is clear.';
+  root.appendChild(note);
+  return root;
+}
+
 function showError(msg) {
   document.getElementById('error').textContent = msg;
 }
@@ -507,13 +578,26 @@ function wireToggle(checkboxId, layerIds) {
 
 const CLOSURE_LAYERS = ['closures-current', 'closures-future', 'closures-detour',
                         'closures-reduced-current', 'closures-reduced-future'];
+const SNOW_PRIORITY_LAYERS = ['snow-priority-one', 'snow-priority-two'];
+const SNOW_PROGRESS_LAYERS = [
+  'snow-progress-last-hour', 'snow-progress-last-two-hours', 'snow-progress-over-two-hours',
+  'snow-progress-priority-one', 'snow-progress-priority-two',
+];
 
 let planMode = false, pts = [], markers = [];
 let closuresData = null;   // set once closures load
 let generatedAt = null;    // the `generated` timestamp
+let snowPriorityData = null;
+let snowPriorityIndex = null;
+let snowPriorityLoadError = null;
+let snowProgressData = null;
+let snowProgressIndex = null;
+let snowProgressLoadError = null;
+let snowProgressRefreshTimer = null;
 let networkIndex = null;
 let routeOptions = [];
 let selectedRouteOption = null;
+let userSelectedRouteOption = false;
 let weatherRefreshTimer = null;
 let weatherRequestVersion = 0;
 let routeRequestVersion = 0;
@@ -820,6 +904,120 @@ map.on('load', async () => {
   wireToggle('t-current', ['closures-current']);
   wireToggle('t-future', ['closures-future']);
   wireToggle('t-detour', ['closures-detour']);
+
+  const snowStatus = document.getElementById('snow-data-status');
+  try {
+    const response = await fetch(CITY.dataDir + '/snow_priority_routes.geojson');
+    if (!response.ok) throw new Error(`snow-priority data HTTP ${response.status}`);
+    snowPriorityData = await response.json();
+    if (snowPriorityData.type !== 'FeatureCollection' ||
+        !Array.isArray(snowPriorityData.features) ||
+        !snowPriorityData.source_updated) {
+      throw new Error('snow-priority data is incomplete');
+    }
+    snowPriorityIndex = CyclingApp.buildSnowPriorityIndex(snowPriorityData);
+    if (!snowPriorityIndex.index.size) throw new Error('snow-priority route geometry is empty');
+    map.addSource('snow-priority-routes', { type: 'geojson', data: snowPriorityData });
+    map.addLayer({
+      id: 'snow-priority-one', type: 'line', source: 'snow-priority-routes',
+      filter: ['==', ['get', 'priority'], 1],
+      paint: { 'line-color': '#7c3aed', 'line-width': 3, 'line-opacity': 0.85 },
+    }, 'closures-current');
+    map.addLayer({
+      id: 'snow-priority-two', type: 'line', source: 'snow-priority-routes',
+      filter: ['==', ['get', 'priority'], 2],
+      paint: { 'line-color': '#0891b2', 'line-width': 2.5, 'line-opacity': 0.8 },
+    }, 'closures-current');
+    wireToggle('t-snow-priority', SNOW_PRIORITY_LAYERS);
+    const sourceDate = new Date(snowPriorityData.source_updated);
+    const stale = !Number.isFinite(sourceDate.getTime()) ||
+      Date.now() - sourceDate.getTime() > 400 * 24 * 60 * 60 * 1000;
+    snowStatus.classList.toggle('warning', stale);
+    snowStatus.textContent = `City snow-priority dataset updated ${
+      Number.isFinite(sourceDate.getTime())
+        ? sourceDate.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+        : 'date unavailable'
+    }${stale ? ' (older than expected)' : ''}. Annual data; it does not confirm recent clearing.`;
+  } catch (error) {
+    console.error('Snow-priority route data failed:', error);
+    snowPriorityLoadError = error.message;
+    snowStatus.classList.add('warning');
+    snowStatus.textContent = 'City snow-priority data is unavailable; winter route ordering will not use it.';
+  }
+
+  map.addSource('snow-progress-routes', {
+    type: 'geojson',
+    data: { type: 'FeatureCollection', features: [] },
+  });
+  const snowProgressColors = {
+    'last-hour': '#16a34a',
+    'last-two-hours': '#f59e0b',
+    'over-two-hours': '#64748b',
+    'priority-one-completed': '#7c3aed',
+    'priority-two-completed': '#0891b2',
+  };
+  Object.entries(snowProgressColors).forEach(([category, color]) => {
+    map.addLayer({
+      id: `snow-progress-${category}`,
+      type: 'line',
+      source: 'snow-progress-routes',
+      filter: ['==', ['get', 'snow_progress_category'], category],
+      paint: {
+        'line-color': color,
+        'line-width': category === 'over-two-hours' ? 2.5 : 3.5,
+        'line-opacity': 0.9,
+        ...(category === 'over-two-hours' ? { 'line-dasharray': [2, 1.5] } : {}),
+      },
+    }, 'closures-current');
+  });
+  wireToggle('t-snow-progress', SNOW_PROGRESS_LAYERS);
+  setVis(SNOW_PROGRESS_LAYERS, document.getElementById('t-snow-progress').checked);
+
+  function updateSnowProgressStatus() {
+    const sourceDate = new Date(snowPriorityData?.source_updated);
+    const priorityStale = !snowPriorityData || !Number.isFinite(sourceDate.getTime()) ||
+      Date.now() - sourceDate.getTime() > 400 * 24 * 60 * 60 * 1000;
+    const priorityStatus = snowPriorityData && Number.isFinite(sourceDate.getTime())
+      ? ` Annual priority map updated ${sourceDate.toLocaleDateString()}; it is not a live clearing report.`
+      : ' Annual priority map is unavailable.';
+    snowStatus.classList.toggle('warning',
+      Boolean(snowProgressLoadError) || snowProgressData?.features.length === 0 || priorityStale);
+    if (snowProgressLoadError) {
+      const previousData = snowProgressData
+        ? ` Showing the last successful report from ${new Date(snowProgressData.fetched_at).toLocaleTimeString()}.`
+        : '';
+      snowStatus.textContent =
+        `Live City clearing progress is unavailable (${snowProgressLoadError}).${previousData}${priorityStatus}`;
+      return;
+    }
+    const checkedAt = snowProgressData
+      ? new Date(snowProgressData.fetched_at).toLocaleTimeString()
+      : 'not yet checked';
+    const count = snowProgressData?.features.length || 0;
+    snowStatus.textContent = count
+      ? `${count} live City progress segments; checked ${checkedAt}. Reports can lag actual conditions and do not guarantee a path is clear.${priorityStatus}`
+      : `No live clearing progress segments are currently reported (checked ${checkedAt}); this does not mean streets are clear.${priorityStatus}`;
+  }
+
+  async function refreshSnowProgress() {
+    try {
+      snowProgressData = await CyclingApp.fetchSnowProgress();
+      snowProgressIndex = CyclingApp.buildSnowProgressIndex(snowProgressData);
+      snowProgressLoadError = null;
+      map.getSource('snow-progress-routes').setData(snowProgressData);
+    } catch (error) {
+      console.error('Live snow-progress refresh failed:', error);
+      snowProgressLoadError = error.message;
+    }
+    updateSnowProgressStatus();
+    if (routeOptions.length && pts.length === 2) await refreshWeatherAndScores();
+  }
+
+  void refreshSnowProgress();
+  clearInterval(snowProgressRefreshTimer);
+  snowProgressRefreshTimer = setInterval(
+    refreshSnowProgress, CyclingApp.SNOW_PROGRESS_REFRESH_MS);
+
   initClosureWalls();
   const tNetwork = document.getElementById('t-network');
   const tUnconfirmed = document.getElementById('t-unconfirmed');
@@ -873,20 +1071,52 @@ map.on('load', async () => {
   map.on('click', (e) => {
     if (planMode) return;
     const hits = closuresNear(e.point);
-    if (!hits.length) return;
-    // A wall under the tap wins, so tapping a wall doesn't open the detour behind it.
-    // Walls are polygons, so nearestFeature (which measures line segments) only applies to line hits.
-    const wallHit = hits.find(f => f.layer && f.layer.id === WALL_LAYER);
-    const pick = wallHit || nearestFeature(e.point, hits);
-    new maplibregl.Popup({ maxWidth: '240px' })
-      .setLngLat(e.lngLat)
-      .setDOMContent(buildClosurePopup(pick.properties))
-      .addTo(map);
+    if (hits.length) {
+      // A wall under the tap wins, so tapping a wall doesn't open the detour behind it.
+      // Walls are polygons, so nearestFeature only applies to line hits.
+      const wallHit = hits.find(f => f.layer && f.layer.id === WALL_LAYER);
+      const pick = wallHit || nearestFeature(e.point, hits);
+      new maplibregl.Popup({ maxWidth: '240px' })
+        .setLngLat(e.lngLat)
+        .setDOMContent(buildClosurePopup(pick.properties))
+        .addTo(map);
+      return;
+    }
+    const progressLayers = SNOW_PROGRESS_LAYERS.filter(id => map.getLayer(id));
+    const progressHits = progressLayers.length
+      ? map.queryRenderedFeatures(e.point, { layers: progressLayers }) : [];
+    if (progressHits.length) {
+      const pick = nearestFeature(e.point, progressHits);
+      new maplibregl.Popup({ maxWidth: '280px' })
+        .setLngLat(e.lngLat)
+        .setDOMContent(buildSnowProgressPopup(pick.properties))
+        .addTo(map);
+      return;
+    }
+    const snowLayers = SNOW_PRIORITY_LAYERS.filter(id => map.getLayer(id));
+    const snowHits = snowLayers.length
+      ? map.queryRenderedFeatures(e.point, { layers: snowLayers }) : [];
+    if (snowHits.length) {
+      const pick = nearestFeature(e.point, snowHits);
+      new maplibregl.Popup({ maxWidth: '240px' })
+        .setLngLat(e.lngLat)
+        .setDOMContent(buildSnowPriorityPopup(pick.properties))
+        .addTo(map);
+    }
   });
 
   // Pointer cursor on desktop (no-op on touch)
   map.on('mousemove', (e) => {
-    map.getCanvas().style.cursor = closuresNear(e.point).length ? 'pointer' : '';
+    const snowLayers = SNOW_PRIORITY_LAYERS.filter(id => map.getLayer(id));
+    const snowHits = snowLayers.length
+      ? map.queryRenderedFeatures(e.point, { layers: snowLayers }).length
+      : 0;
+    const progressLayers = SNOW_PROGRESS_LAYERS.filter(id => map.getLayer(id));
+    const progressHits = progressLayers.length
+      ? map.queryRenderedFeatures(e.point, { layers: progressLayers }).length
+      : 0;
+    map.getCanvas().style.cursor =
+      closuresNear(e.point).length || snowHits || progressHits ? 'pointer' : '';
   });
 
   // 2. Network in the background, inserted beneath the closure layers
@@ -999,7 +1229,19 @@ map.on('load', async () => {
     const coverageText = selected.scoreCoverage < 100
       ? ` Score uses ${selected.scoreCoverage}/100 available data-weight points; unavailable attributes are not guessed.`
       : '';
-    banner.textContent = `${closureText}${coverageText} ${routeMessage} Route scores are comparative guidance, not a safety guarantee.`;
+    const winterText = selected.winter?.conditions
+      ? selected.winter.coverage
+        ? ` Winter weather is forecast. About ${Math.round(selected.winter.coverage.priorityPercent)}% of this route is near mapped City priority streets (Priority 1: ${Math.round(selected.winter.coverage.priority1Percent)}%; Priority 2: ${Math.round(selected.winter.coverage.priority2Percent)}%). The map shows service commitments, not actual clearing; roads outside these routes may also be cleared.`
+        : ` Winter weather is forecast, but snow-priority route coverage is unavailable${snowPriorityLoadError ? ` (${snowPriorityLoadError})` : ''}; no annual-data preference was applied.`
+      : '';
+    const liveProgressText = selected.winter?.conditions
+      ? selected.winter.progress
+        ? ` City progress reports are near about ${Math.round(selected.winter.progress.reportedPercent)}% of this route (approximate 35 m proximity; reports may lag and do not guarantee clear conditions).`
+        : snowProgressLoadError
+          ? ` Live City progress is unavailable${snowProgressLoadError ? ` (${snowProgressLoadError})` : ''}; any ordering preference uses annual priority streets only.`
+          : ' No live City progress reports are near this route; this does not mean the route is uncleared or clear.'
+      : '';
+    banner.textContent = `${closureText}${winterText}${liveProgressText}${coverageText} ${routeMessage} Route scores are comparative guidance, not a safety guarantee.`;
   }
 
   function renderRouteCards() {
@@ -1013,6 +1255,7 @@ map.on('load', async () => {
         `${(item.distance / 1000).toFixed(1)} kilometres`);
       card.addEventListener('click', () => {
         selectedRouteOption = item.option;
+        userSelectedRouteOption = true;
         renderRouteCards();
         updateRouteSource();
       });
@@ -1023,7 +1266,10 @@ map.on('load', async () => {
       title.className = 'route-card-title';
       title.textContent = item.route.properties?.routing_profile === 'cycling-road'
         ? `Road-focused option ${item.rank}`
-        : item.rank === 1 ? 'Best-scoring option' : `Option ${item.rank}`;
+        : item.rank === 1 && item.winter?.conditions &&
+          item.winter.coverage?.priorityPercent > 0
+          ? 'Winter-preferred option'
+          : item.rank === 1 ? 'Best-scoring option' : `Option ${item.rank}`;
       const badge = document.createElement('span');
       badge.className = 'score-badge';
       badge.style.backgroundColor = routeColors[item.option] || '#475569';
@@ -1039,6 +1285,20 @@ map.on('load', async () => {
       const explanation = document.createElement('div');
       explanation.className = 'route-explanations';
       explanation.textContent = item.explanations.join(' ');
+      if (item.winter?.conditions) {
+        const winterNote = document.createElement('div');
+        winterNote.className = 'route-warning';
+        const annualFit = item.winter.coverage
+          ? `Annual priority streets are near about ${Math.round(item.winter.coverage.priorityPercent)}% of the route.`
+          : 'Annual priority route coverage is unavailable.';
+        const liveFit = item.winter.progress
+          ? `Live reports are near about ${Math.round(item.winter.progress.reportedPercent)}% (approximate proximity; reports can lag).`
+          : snowProgressLoadError
+            ? `Live City progress is unavailable (${snowProgressLoadError}).`
+            : 'No live City progress reports are near this route; that does not indicate clearing status.';
+        winterNote.textContent = `Winter weather is forecast. ${annualFit} ${liveFit} Snow data influences route ordering by at most 5 points, not the universal score; it does not guarantee a clear route.`;
+        card.appendChild(winterNote);
+      }
       const breakdown = document.createElement('div');
       breakdown.className = 'score-breakdown';
       const components = item.components;
@@ -1102,7 +1362,10 @@ map.on('load', async () => {
       const weather = await CyclingApp.fetchWeather(pts[0][1], pts[0][0], departureMs);
       if (version !== weatherRequestVersion) return;
       routeOptions = CyclingApp.scoreRoutes(
-        routeGeometriesInOptionOrder(), networkIndex, weather, departureMs);
+        routeGeometriesInOptionOrder(), networkIndex, weather, departureMs,
+        snowPriorityIndex, snowProgressIndex);
+      if (!userSelectedRouteOption && routeOptions.length)
+        selectedRouteOption = routeOptions[0].option;
       routeOptions.forEach(item => {
         item.hits = closuresData ? routeCrossesClosures(item.route, closuresData) : [];
       });
@@ -1115,7 +1378,10 @@ map.on('load', async () => {
       if (version !== weatherRequestVersion) return;
       console.error('Weather request failed:', error);
       routeOptions = CyclingApp.scoreRoutes(
-        routeGeometriesInOptionOrder(), networkIndex, null, departureMs);
+        routeGeometriesInOptionOrder(), networkIndex, null, departureMs,
+        snowPriorityIndex, snowProgressIndex);
+      if (!userSelectedRouteOption && routeOptions.length)
+        selectedRouteOption = routeOptions[0].option;
       routeOptions.forEach(item => {
         item.hits = closuresData ? routeCrossesClosures(item.route, closuresData) : [];
       });
@@ -1138,6 +1404,7 @@ map.on('load', async () => {
     pts = []; markers.forEach(m => m.remove()); markers = [];
     routeOptions = [];
     selectedRouteOption = null;
+    userSelectedRouteOption = false;
     map.getSource('saved-ride-route').setData({ type: 'FeatureCollection', features: [] });
     routeList.replaceChildren();
     weatherSummary.textContent = '';
@@ -1180,6 +1447,7 @@ map.on('load', async () => {
     markers = [];
     routeOptions = [];
     selectedRouteOption = null;
+    userSelectedRouteOption = false;
     routeList.replaceChildren();
     weatherSummary.textContent = '';
     map.getSource('route-options').setData({ type: 'FeatureCollection', features: [] });
@@ -1192,7 +1460,6 @@ map.on('load', async () => {
         geometry: ride.route,
       }],
     });
-
     const lines = ride.route.type === 'LineString'
       ? [ride.route.coordinates]
       : ride.route.coordinates;
@@ -1248,12 +1515,15 @@ map.on('load', async () => {
         ? ''
         : 'Closure data is unavailable; route options cannot be checked against known closures.';
       routeOptions = CyclingApp.scoreRoutes(
-        routes, networkIndex, null, parseCalgaryDateTime(document.getElementById('departure-time').value));
+        routes, networkIndex, null,
+        parseCalgaryDateTime(document.getElementById('departure-time').value),
+        snowPriorityIndex, snowProgressIndex);
       routeOptions.forEach(item => {
         item.hits = closuresData ? routeCrossesClosures(item.route, closuresData) : [];
       });
       if (!routeOptions.length) throw new Error('The routing service returned no alternatives.');
       selectedRouteOption = routeOptions[0].option;
+      userSelectedRouteOption = false;
       renderRouteCards();
       updateRouteSource();
       weatherSummary.textContent = '';

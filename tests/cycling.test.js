@@ -114,8 +114,160 @@ test('weather score warns for rain, headwinds, gusts, and extreme temperatures',
     [route], null, badForecast, Date.UTC(2026, 5, 1, 12),
   )[0];
   assert.ok(result.components.weather < 10);
-  assert.equal(result.weather.warnings.length, 4);
+  assert.equal(result.weather.warnings.length, 5);
+  assert.equal(result.weather.winterConditions, true);
   assert.ok(result.weather.headwind > 49);
+});
+
+test('winter conditions prefer routes near priority streets without changing universal scores', () => {
+  const winterForecast = {
+    hourly: {
+      time: ['2026-06-01T12:00'],
+      temperature_2m: [-2],
+      precipitation: [1],
+      snowfall: [0],
+      wind_speed_10m: [0],
+      wind_direction_10m: [0],
+      wind_gusts_10m: [0],
+    },
+  };
+  const priorityRoutes = CyclingApp.buildSnowPriorityIndex({
+    source_updated: '2026-10-01T20:35:57+00:00',
+    features: [{
+      type: 'Feature',
+      properties: { priority: 1 },
+      geometry: { type: 'MultiLineString', coordinates: [[[-114.1, 51], [-114.09, 51]]] },
+    }],
+  });
+  const maintained = makeRoute(
+    [[-114.1, 51], [-114.09, 51]], { distance: 1000, duration: 500 },
+  );
+  const other = makeRoute(
+    [[-114.1, 51.01], [-114.09, 51.01]], { distance: 1000, duration: 500 },
+  );
+  const result = CyclingApp.scoreRoutes(
+    [other, maintained], null, winterForecast, Date.UTC(2026, 5, 1, 12), priorityRoutes,
+  );
+
+  assert.equal(result[0].route, maintained);
+  assert.equal(result[0].score, result[1].score);
+  assert.ok(result[0].winter.coverage.priorityPercent > 90);
+  assert.equal(result[0].winter.rankingBonus, 5);
+  assert.equal(result[1].winter.coverage.priorityPercent, 0);
+});
+
+test('cold dry forecast does not assume snow clearing is needed', () => {
+  const coldDryForecast = {
+    hourly: {
+      time: ['2026-06-01T12:00'],
+      temperature_2m: [-5],
+      precipitation: [0],
+      snowfall: [0],
+      wind_speed_10m: [0],
+      wind_direction_10m: [0],
+      wind_gusts_10m: [0],
+    },
+  };
+  const result = CyclingApp.scoreRoutes(
+    [makeRoute([[-114.1, 51], [-114.09, 51]], { distance: 1000, duration: 500 })],
+    null, coldDryForecast, Date.UTC(2026, 5, 1, 12),
+  )[0];
+
+  assert.equal(result.winter, null);
+});
+
+test('live City snow progress categories match reported hours and completions', () => {
+  assert.equal(CyclingApp.snowProgressCategory({ PRIORITY: 0, HOURS_BACK: 1 }), 'last-hour');
+  assert.equal(CyclingApp.snowProgressCategory({ PRIORITY: 0, HOURS_BACK: 2 }), 'last-two-hours');
+  assert.equal(CyclingApp.snowProgressCategory({ PRIORITY: 0, HOURS_BACK: 24 }), 'over-two-hours');
+  assert.equal(CyclingApp.snowProgressCategory({ PRIORITY: 0, HOURS_BACK: 48 }), 'over-two-hours');
+  assert.equal(CyclingApp.snowProgressCategory({ PRIORITY: 1, HOURS_BACK: 49 }), 'priority-one-completed');
+  assert.equal(CyclingApp.snowProgressCategory({ PRIORITY: 2, HOURS_BACK: 49 }), 'priority-two-completed');
+  assert.equal(CyclingApp.snowProgressCategory({ PRIORITY: 3, HOURS_BACK: 1 }), null);
+});
+
+test('live City snow progress fetch paginates even if ArcGIS omits its limit flag', async () => {
+  const offsets = [];
+  const makeFeature = id => ({
+    type: 'Feature',
+    id,
+    properties: { OBJECTID: id, PRIORITY: 0, HOURS_BACK: 1 },
+    geometry: { type: 'LineString', coordinates: [[-114.1, 51], [-114.09, 51]] },
+  });
+  const fetcher = async (url, options) => {
+    assert.equal(options.cache, 'no-store');
+    assert.match(url.toString(), /SnowClearingProgress\/MapServer\/0\/query/);
+    assert.equal(url.searchParams.get('where'), '1=1');
+    assert.equal(url.searchParams.get('outSR'), '4326');
+    assert.equal(url.searchParams.get('f'), 'geojson');
+    offsets.push(Number(url.searchParams.get('resultOffset')));
+    const features = offsets.length === 1
+      ? Array.from({ length: 1000 }, (_, index) => makeFeature(index + 1))
+      : [makeFeature(1001)];
+    return { ok: true, json: async () => ({ type: 'FeatureCollection', features }) };
+  };
+
+  const data = await CyclingApp.fetchSnowProgress(fetcher, true);
+  assert.deepEqual(offsets, [0, 1000]);
+  assert.equal(data.features.length, 1001);
+  assert.equal(data.features[0].properties.snow_progress_category, 'last-hour');
+  assert.ok(data.fetched_at);
+});
+
+test('empty live City snow-progress response is valid and indexes to no reported segments', async () => {
+  const data = await CyclingApp.fetchSnowProgress(async () => ({
+    ok: true,
+    json: async () => ({ type: 'FeatureCollection', features: [] }),
+  }), true);
+  assert.deepEqual(data.features, []);
+  assert.equal(CyclingApp.buildSnowProgressIndex(data).featureCount, 0);
+});
+
+test('live snow progress influences winter ordering without changing universal scores', () => {
+  const winterForecast = {
+    hourly: {
+      time: ['2026-06-01T12:00'],
+      temperature_2m: [-2],
+      precipitation: [1],
+      snowfall: [0],
+      wind_speed_10m: [0],
+      wind_direction_10m: [0],
+      wind_gusts_10m: [0],
+    },
+  };
+  const liveRoute = makeRoute(
+    [[-114.1, 51], [-114.09, 51]], { distance: 1000, duration: 500 },
+  );
+  const annualPriorityRoute = makeRoute(
+    [[-114.1, 51.01], [-114.09, 51.01]], { distance: 1000, duration: 500 },
+  );
+  const snowPriorityIndex = CyclingApp.buildSnowPriorityIndex({
+    source_updated: '2026-10-01T20:35:57+00:00',
+    features: [{
+      type: 'Feature',
+      properties: { priority: 1 },
+      geometry: { type: 'LineString', coordinates: annualPriorityRoute.geometry.coordinates },
+    }],
+  });
+  const progressData = {
+    features: [{
+      type: 'Feature',
+      properties: { PRIORITY: 0, HOURS_BACK: 1 },
+      geometry: { type: 'LineString', coordinates: liveRoute.geometry.coordinates },
+    }],
+    fetched_at: '2026-06-01T12:00:00Z',
+  };
+  const snowProgressIndex = CyclingApp.buildSnowProgressIndex(progressData);
+  const result = CyclingApp.scoreRoutes(
+    [annualPriorityRoute, liveRoute], null, winterForecast, Date.UTC(2026, 5, 1, 12),
+    snowPriorityIndex, snowProgressIndex,
+  );
+
+  assert.equal(result[0].route, liveRoute);
+  assert.equal(result[0].score, result[1].score);
+  assert.ok(result[0].winter.progress.lastHourPercent > 90);
+  assert.equal(result[0].winter.rankingBonus, 5);
+  assert.equal(result[1].winter.rankingBonus, 0);
 });
 
 test('weather requests are cached and share in-flight requests', async () => {
@@ -123,6 +275,7 @@ test('weather requests are cached and share in-flight requests', async () => {
   const fetcher = async url => {
     requests++;
     assert.match(url.toString(), /api\.open-meteo\.com/);
+    assert.match(url.searchParams.get('hourly'), /snowfall/);
     return { ok: true, json: async () => forecast };
   };
   const when = Date.parse('2026-06-01T12:00');

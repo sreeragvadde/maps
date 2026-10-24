@@ -89,6 +89,7 @@ REQUIRED_BY_FILE = {
     "combined.geojson":  FULL_REQUIRED,
     "network.geojson":   ("bicycle_access",),              # index.html styling
     "closures.geojson":  ("status", "calgary_temporal_status"),  # index.html styling
+    "snow_priority_routes.geojson": ("priority",),
 }
 
 DATE_FIELDS = ("start_date", "end_date", "last_verified")
@@ -224,12 +225,60 @@ def check_platform():
                      "relevant for the developer's original setup.",
             )
 
+@check("GEO-003", "snow-priority route geometries are line features")
+def check_snow_priority_geometry():
+    path = DATA / "snow_priority_routes.geojson"
+    if not path.exists():
+            return
+    ok = {"LineString", "MultiLineString"}
+    bad = [
+            i for i, feature in enumerate(_load_geojson(path).get("features", []))
+            if (feature.get("geometry") or {}).get("type") not in ok
+    ]
+    if bad:
+            raise GeometryAnomaly(
+                f"{len(bad)} snow-priority feature(s) have unexpected geometry at indices {bad[:5]}.",
+            )
+
 @check("ENV-002", "Python version is at least 3.9")
 def check_python_version():
     if sys.version_info < (3, 9):
         raise EnvironmentProblem(
             f"Python {sys.version.split()[0]} is too old.",
             hint="Upgrade Python inside WSL (e.g. `sudo apt install python3.11`).",
+        )
+
+@check("DATA-004", "snow priority routes carry the City's source update timestamp")
+def check_snow_priority_source_timestamp():
+    path = DATA / "snow_priority_routes.geojson"
+    if not path.exists():
+        return
+    updated = _load_geojson(path).get("source_updated")
+    try:
+        datetime.fromisoformat(str(updated).replace("Z", "+00:00"))
+    except ValueError:
+        raise SchemaViolation(
+            f"snow_priority_routes.geojson source_updated={updated!r} is not ISO-8601.",
+        )
+
+@check("DATA-005", "snow-priority source data is not more than 400 days old")
+def check_snow_priority_freshness():
+    path = DATA / "snow_priority_routes.geojson"
+    if not path.exists():
+        return
+    updated = _load_geojson(path).get("source_updated")
+    try:
+        timestamp = datetime.fromisoformat(str(updated).replace("Z", "+00:00"))
+    except ValueError:
+        return
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=timezone.utc)
+    age_days = (datetime.now(timezone.utc) - timestamp).total_seconds() / 86400
+    if age_days > 400:
+        raise DataStale(
+            f"City snow-priority dataset was updated {age_days:.0f} days ago.",
+            hint="Check the City's annual Snow and Ice Clearing Priority Routes dataset.",
+            severity="warning",
         )
 
 # ---------------------------------------------------------------------------
@@ -256,9 +305,13 @@ def check_required_files():
                  "doctor.py.",
         )
 
-@check("FILE-002", "Data outputs exist (network.geojson, closures.geojson)")
+@check("FILE-002", "Data outputs exist (network, closures, snow priority routes)")
 def check_data_files():
-    expected = (DATA / "network.geojson", DATA / "closures.geojson")
+    expected = (
+        DATA / "network.geojson",
+        DATA / "closures.geojson",
+        DATA / "snow_priority_routes.geojson",
+    )
     missing = [p.name for p in expected if not p.exists()]
     if missing:
         raise MissingFile(
@@ -466,6 +519,22 @@ def check_network_schema():
         return
     _check_feature_schema(_load_geojson(path), path, _probe_allowed_from_schema())
 
+@check("SCHEMA-005", "snow_priority_routes.geojson priorities are valid")
+def check_snow_priority_schema():
+    path = DATA / "snow_priority_routes.geojson"
+    if not path.exists():
+        return
+    fc = _load_geojson(path)
+    _check_feature_schema(fc, path, _probe_allowed_from_schema())
+    priorities = {
+        (feature.get("properties") or {}).get("priority")
+        for feature in fc.get("features", [])
+    }
+    if priorities != {1, 2}:
+        raise SchemaViolation(
+            f"snow_priority_routes.geojson must contain Priority 1 and 2; found {sorted(priorities)}.",
+        )
+
 @check("SCHEMA-003", "closures.geojson features satisfy its slim schema")
 def check_closures_schema():
     path = DATA / "closures.geojson"
@@ -602,7 +671,7 @@ def check_web_refs():
     if not path.exists():
         return
     text = path.read_text(encoding="utf-8")
-    for needle in ("network.geojson", "closures.geojson"):
+    for needle in ("network.geojson", "closures.geojson", "snow_priority_routes.geojson"):
         if needle not in text:
             raise WebAssetProblem(
                 f"web/index.html does not reference {needle!r}.",

@@ -25,6 +25,10 @@ NETWORK_KEEP = (
     "cycleway", "cycleway_left", "cycleway_right", "incline", "ele",
 )
 CLOSURE_KEEP = ("status", "calgary_temporal_status", "start_date", "end_date", "detour_note")
+SNOW_PRIORITY_SOURCE = (
+    "https://data.calgary.ca/Health-and-Safety/"
+    "Snow-and-Ice-Clearing-Priority-Routes/4v8s-3kss"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -73,6 +77,21 @@ def build_closures_layer(closures: list[dict]) -> dict:
     layer = make_feature_collection([_slim(f, CLOSURE_KEEP) for f in closures])
     layer["generated"] = datetime.now(timezone.utc).isoformat(timespec="seconds")  # GeoJSON allows extra top-level members
     return layer
+
+
+def build_snow_priority_layer(snow_data: dict) -> dict:
+    """Build a deterministic, slim layer for official winter-priority routes."""
+    features = [_slim(feature, ("priority",)) for feature in snow_data["features"]]
+    return {
+        **make_feature_collection(features),
+        "source_updated": snow_data["source_updated"],
+        "source_url": SNOW_PRIORITY_SOURCE,
+        "attribution": "The City of Calgary",
+        "scope_note": (
+            "Priority routes show City snow-clearing service commitments after snowfall ends; "
+            "they do not show live plow activity or confirm a route is currently clear."
+        ),
+    }
 
 
 # ---------------------------------------------------------------------------

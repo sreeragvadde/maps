@@ -1,0 +1,49 @@
+name: Refresh snow priority routes
+
+on:
+  schedule:
+    - cron: "30 5 1 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: refresh-snow-priority-routes
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Refresh snow-priority route layer
+        run: python3 Scraping/refresh_snow_priority.py
+
+      - name: Test snow-priority data pipeline
+        run: python3 -m unittest discover -s tests -p 'test_snow_priority.py'
+
+      - name: Commit if the official dataset changed
+        run: |
+          set -euo pipefail
+
+          if git diff --quiet data/snow_priority_routes.geojson; then
+            echo "No source changes in snow-priority routes."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/snow_priority_routes.geojson
+          git commit -m "Refresh Calgary snow-priority routes"
+          git push

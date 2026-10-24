@@ -141,7 +141,7 @@
   .primary-btn:focus-visible, .secondary-btn:focus-visible, .quiet-btn:focus-visible,
   input:focus-visible, select:focus-visible { outline: 3px solid #f0a32f; outline-offset: 2px; }
   .field-label { display: block; margin: 8px 0 4px; font-size: 12px; font-weight: 650; color: #405248; }
-  #departure-time, #baseline-mode { box-sizing: border-box; width: 100%; min-height: 40px; padding: 7px 9px;
+  #departure-time { box-sizing: border-box; width: 100%; min-height: 40px; padding: 7px 9px;
     border: 1px solid #aebfb3; border-radius: 9px; color: #15251e; background: #fff; font: inherit; }
   #route-banner { margin: 8px 0 0; color: #34483b; font-size: 12px; line-height: 1.4; }
   #route-banner:empty { display: none; }
@@ -186,7 +186,12 @@
   #ride-history { margin-top: 10px; }
   #ride-history summary { cursor: pointer; color: #254835; font-size: 12px; font-weight: 650; }
   #ride-list { margin: 7px 0 0; padding: 0; list-style: none; }
-  #ride-list li { padding: 7px 0; border-top: 1px solid #e4ebe6; color: #405248; font-size: 11px; line-height: 1.4; }
+  #ride-list li { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 7px 0; border-top: 1px solid #e4ebe6; color: #405248; font-size: 11px; line-height: 1.4; }
+  #ride-list .ride-summary { min-width: 0; }
+  #ride-list .show-ride-route { flex: none; min-height: 32px; padding: 5px 8px; border: 1px solid #b9cfc0;
+    border-radius: 8px; background: #f2f8f4; color: #155a3d; font: inherit; font-weight: 650; cursor: pointer; }
+  #ride-list .show-ride-route:disabled { color: #69756c; background: #f1f3f1; cursor: not-allowed; }
   #eco-dashboard .disclaimer { margin: 10px 0 0; color: #5b675f; font-size: 10px; line-height: 1.4; }
   .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
     clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
@@ -284,28 +289,21 @@
   </div>
   <div id="eco-progress" role="progressbar" aria-label="Progress to 100 km cycling goal" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span></span></div>
   <p id="goal-copy">100 km cycling goal · 0% complete</p>
-  <p id="eco-points-rule" style="margin:0;color:#52635a;font-size:10px">Earn 10 points per km only for a confirmed car-replacing ride.</p>
+  <p id="eco-points-rule" style="margin:0;color:#52635a;font-size:10px">Earn 10 points per km for every completed ride you log.</p>
   <div id="achievements" aria-label="Achievements"></div>
   <p id="eco-note" role="status"></p>
   <button id="open-ride-form" class="secondary-btn" type="button" disabled>Log completed ride</button>
   <form id="ride-form" hidden>
-    <label class="field-label" for="baseline-mode">What would you have used instead?</label>
-    <select id="baseline-mode">
-      <option value="car">Car, solo driver</option>
-      <option value="rideshare">Shared car / rideshare</option>
-      <option value="transit">Public transit</option>
-      <option value="other">Walking or other zero-tailpipe travel</option>
-    </select>
-    <label><input id="car-replacement" type="checkbox">
-      <span>This ride replaced a trip I would otherwise have made by car. Points are only awarded when this is selected and the baseline is a car.</span>
-    </label>
+    <p style="margin:0;color:#405248;font-size:12px;line-height:1.4">
+      Log this completed ride to earn 10 points per kilometre. No transport alternative is needed.
+    </p>
     <div class="button-row">
       <button class="primary-btn" type="submit">Save completed ride</button>
       <button id="cancel-ride-form" class="quiet-btn" type="button">Cancel</button>
     </div>
   </form>
   <details id="ride-history"><summary>Ride history (0)</summary><ul id="ride-list"></ul></details>
-  <p class="disclaimer">CO₂ values are estimates relative to your selected alternative, using 0.192 kg CO₂/km for solo driving. Cycling does not guarantee a safe route; forecasts and mapped road tags can be incomplete.</p>
+  <p class="disclaimer">CO₂ totals include only rides with an explicitly recorded alternative mode; new rides do not claim avoided emissions because no alternative is collected. Cycling does not guarantee a safe route; forecasts and mapped road tags can be incomplete.</p>
 </aside>
 <script>
 
@@ -545,9 +543,8 @@ function renderEcoDashboard() {
 
   const achievements = [
     { title: 'First ride', earned: summary.rideCount >= 1 },
-    { title: 'First car-replacing ride', earned: summary.carReplacements >= 1 },
     { title: '50 km cycled', earned: summary.distanceKm >= 50 },
-    { title: '10 car-replacing rides', earned: summary.carReplacements >= 10 },
+    { title: '10 completed rides', earned: summary.rideCount >= 10 },
   ];
   const achievementList = document.getElementById('achievements');
   achievementList.replaceChildren(...achievements.map(item => {
@@ -562,8 +559,22 @@ function renderEcoDashboard() {
   (ecoState.rides || []).slice(0, 8).forEach(ride => {
     const item = document.createElement('li');
     const date = new Date(ride.date).toLocaleDateString();
-    item.textContent = `${date} · ${ride.distanceKm.toFixed(1)} km · ${ride.points} pts · ` +
-      `${ride.co2Kg.toFixed(2)} kg CO₂ estimate (${ride.mode})`;
+    const summaryText = document.createElement('span');
+    summaryText.className = 'ride-summary';
+    const co2Text = Number.isFinite(ride.co2Kg)
+      ? `${ride.co2Kg.toFixed(2)} kg CO₂ estimate`
+      : 'CO₂ not estimated';
+    summaryText.textContent = `${date} · ${ride.distanceKm.toFixed(1)} km · ${ride.points} pts · ${co2Text}`;
+    const showRoute = document.createElement('button');
+    showRoute.type = 'button';
+    showRoute.className = 'show-ride-route';
+    showRoute.dataset.rideId = ride.id;
+    showRoute.disabled = !ride.route?.coordinates?.length;
+    showRoute.textContent = showRoute.disabled ? 'No saved route' : 'Show route';
+    showRoute.setAttribute('aria-label', showRoute.disabled
+      ? `Route geometry is not saved for ride from ${date}`
+      : `Show saved route from ${date}`);
+    item.append(summaryText, showRoute);
     rideList.appendChild(item);
   });
   if (!summary.rideCount) {
@@ -785,6 +796,10 @@ map.on('load', async () => {
   // Route alternatives, active closure overlays, and weather-aware scoring.
   map.addSource('route-options', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
   map.addSource('route-hits', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+  map.addSource('saved-ride-route', {
+    type: 'geojson',
+    data: { type: 'FeatureCollection', features: [] },
+  });
   map.addLayer({ id: 'route-lines', type: 'line', source: 'route-options',
     paint: {
       'line-color': ['match', ['get', 'optionIndex'],
@@ -801,6 +816,9 @@ map.on('load', async () => {
     filter: ['get', 'possible'],
     paint: { 'line-color': '#f59e0b', 'line-width': 9, 'line-opacity': 0.9,
             'line-dasharray': [1.5, 1.5] } });
+  map.addLayer({ id: 'saved-ride-route-line', type: 'line', source: 'saved-ride-route',
+    paint: { 'line-color': '#7a3e9d', 'line-width': 6, 'line-opacity': 0.95,
+      'line-dasharray': [2, 1] } });
 
   const banner = document.getElementById('route-banner');
   const weatherSummary = document.getElementById('weather-summary');
@@ -998,6 +1016,7 @@ map.on('load', async () => {
     pts = []; markers.forEach(m => m.remove()); markers = [];
     routeOptions = [];
     selectedRouteOption = null;
+    map.getSource('saved-ride-route').setData({ type: 'FeatureCollection', features: [] });
     routeList.replaceChildren();
     weatherSummary.textContent = '';
     updateRouteSource();
@@ -1017,30 +1036,70 @@ map.on('load', async () => {
 
   document.getElementById('open-ride-form').addEventListener('click', () => {
     rideForm.hidden = false;
-    document.getElementById('baseline-mode').focus();
+    rideForm.querySelector('button[type="submit"]').focus();
   });
   document.getElementById('cancel-ride-form').addEventListener('click', () => {
     rideForm.hidden = true;
+  });
+  document.getElementById('ride-list').addEventListener('click', event => {
+    const button = event.target.closest('button[data-ride-id]');
+    if (!button) return;
+    const ride = (ecoState.rides || []).find(item => item.id === button.dataset.rideId);
+    if (!ride?.route?.coordinates?.length) return;
+
+    routeRequestVersion++;
+    weatherRequestVersion++;
+    clearInterval(weatherRefreshTimer);
+    weatherRefreshTimer = null;
+    planMode = false;
+    document.getElementById('plan-btn').textContent = 'Plan a route';
+    pts = [];
+    markers.forEach(marker => marker.remove());
+    markers = [];
+    routeOptions = [];
+    selectedRouteOption = null;
+    routeList.replaceChildren();
+    weatherSummary.textContent = '';
+    map.getSource('route-options').setData({ type: 'FeatureCollection', features: [] });
+    map.getSource('route-hits').setData({ type: 'FeatureCollection', features: [] });
+    map.getSource('saved-ride-route').setData({
+      type: 'FeatureCollection',
+      features: [{
+        type: 'Feature',
+        properties: { savedRideId: ride.id },
+        geometry: ride.route,
+      }],
+    });
+
+    const lines = ride.route.type === 'LineString'
+      ? [ride.route.coordinates]
+      : ride.route.coordinates;
+    const bounds = new maplibregl.LngLatBounds();
+    lines.flat().forEach(coordinate => bounds.extend(coordinate));
+    map.fitBounds(bounds, { padding: 64, maxZoom: 15, duration: 650 });
+
+    const date = new Date(ride.date).toLocaleDateString();
+    routeMessage = `Showing saved route from ${date}. It is the route logged for this ride; current weather and closures may differ.`;
+    banner.textContent = routeMessage;
+    document.getElementById('eco-note').textContent =
+      'Saved route shown in purple. Current closures and weather may have changed since this ride.';
+    document.getElementById('eco-note').classList.remove('error');
   });
   rideForm.addEventListener('submit', event => {
     event.preventDefault();
     const selected = routeOptions.find(item => item.option === selectedRouteOption);
     if (!selected) return;
-    const mode = document.getElementById('baseline-mode').value;
-    const carReplacement = document.getElementById('car-replacement').checked;
     const result = tripStore.addRide({
       distanceKm: selected.distance / 1000,
-      mode,
-      carReplacement,
       routeName: `Calgary option ${selected.rank}`,
+      route: selected.route,
     });
     ecoState = result.state;
     renderEcoDashboard();
     rideForm.reset();
     rideForm.hidden = true;
-    document.getElementById('eco-note').textContent = result.ride.carReplacement
-      ? `Ride saved: ${result.ride.points} points and an estimated ${result.ride.co2Kg.toFixed(2)} kg CO₂ avoided.`
-      : `Ride saved without car-replacement points. Estimated ${result.ride.co2Kg.toFixed(2)} kg CO₂ versus your selected travel mode.`;
+    document.getElementById('eco-note').textContent =
+      `Ride saved: ${result.ride.points} points. CO₂ is not estimated because no alternative transport mode was recorded.`;
     if (ecoState.storageAvailable === false)
       document.getElementById('eco-note').textContent += ' This change may not persist after closing the browser.';
   });

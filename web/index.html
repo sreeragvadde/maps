@@ -328,6 +328,31 @@ let generatedAt = null;    // the `generated` timestamp
 
 map.on('load', async () => {
   const loading = document.getElementById('loading');
+  // 0. 3D
+  function init3D(map) {
+    try {
+      map.addSource('dem', {
+        type: 'raster-dem',
+        tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'],
+        encoding: 'terrarium',
+        tileSize: 256,
+        maxzoom: 15,
+        attribution: 'Terrain: Mapzen / AWS Terrain Tiles'
+      });
+      map.addSource('satellite', {
+        type: 'raster',
+        tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+        tileSize: 256,
+        maxzoom: 19,
+        attribution: 'Imagery © Esri, Maxar, Earthstar Geographics'
+      });
+      map.addLayer({
+        id: 'satellite', type: 'raster', source: 'satellite',
+        layout: { visibility: 'none' }
+      });
+    } catch (e) { console.error('3D init failed', e); }
+  }
+  init3D(map);   // adds DEM + satellite source/layer first
 
   // 1. Closures first: small, and the point of the app
   try {
